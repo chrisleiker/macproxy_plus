@@ -50,7 +50,12 @@ domain_to_extension = {}
 print('Enabled Extensions: ')
 for ext in ENABLED_EXTENSIONS:
 	print(ext)
-	module = __import__(f"extensions.{ext}.{ext}", fromlist=[''])
+	try:
+		module = __import__(f"extensions.{ext}.{ext}", fromlist=[''])
+	except AttributeError as e:
+		print(f"ERROR: extension '{ext}' could not load: {e}")
+		print("Check that config.py defines every API key / setting this extension needs (see config.py.example).")
+		raise SystemExit(1)
 	extensions[ext] = module
 	domain_to_extension[module.DOMAIN] = module
 
