@@ -1,0 +1,9 @@
+.git
+.gitignore
+**/__pycache__
+venv
+current
+config.py
+**/cached_images
+readme_images
+.DS_Store

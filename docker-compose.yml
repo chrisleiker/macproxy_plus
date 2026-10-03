@@ -1,0 +1,13 @@
+services:
+  macproxy:
+    build: .
+    image: macproxy_plus
+    container_name: macproxy_plus
+    restart: unless-stopped
+    ports:
+      - "${PORT:-5001}:${PORT:-5001}"
+    environment:
+      - PORT=${PORT:-5001}
+    volumes:
+      # Copy config.py.example to config.py and edit it to enable extensions
+      - ./config.py:/app/config.py:ro

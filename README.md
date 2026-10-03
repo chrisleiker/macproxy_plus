@@ -30,6 +30,15 @@ To enable extensions:
 		]
 	```
 
+### Running with Docker
+
+```shell
+cp config.py.example config.py   # edit to enable extensions / add API keys
+docker compose up -d --build
+```
+
+The proxy listens on port `5001` (change with `PORT=8080 docker compose up -d`). `config.py` is mounted read-only into the container; edit it and run `docker compose restart` to apply changes. Requirements for all extensions are baked into the image.
+
 ### Starting MacProxy Plus
 
 On Unix-like systems (such as Linux or macOS), run the ```start_macproxy.sh``` script. It will create a Python virtual environment, install the required Python packages, and make the proxy server available on your local network.
