@@ -12,6 +12,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Headless Chromium for RENDER_JAVASCRIPT (adds roughly 500MB; unused unless that setting is on)
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+
 # Requirements for every extension, so any of them can be enabled via config.py
 # without rebuilding the image
 COPY extensions/ extensions/

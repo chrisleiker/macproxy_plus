@@ -13,7 +13,7 @@ from werkzeug.serving import get_interface_ip
 from werkzeug.wrappers.response import Response as WerkzeugResponse
 
 # First-party imports
-from utils import css_utils, js_utils, site_overrides
+from utils import css_utils, js_utils, render_utils, site_overrides
 from utils.html_utils import transcode_html, transcode_content
 from utils.image_utils import is_image_url, fetch_and_cache_image, CACHE_DIR
 from utils.system_utils import load_preset
@@ -45,6 +45,9 @@ config = load_preset()
 
 # Now get the settings we need after preset has potentially modified them
 ENABLED_EXTENSIONS = config.ENABLED_EXTENSIONS
+
+# Start headless Chromium in the background if JavaScript rendering is on, so the first page is not slow
+render_utils.warm_up(config)
 
 # Load extensions
 extensions = {}
@@ -284,6 +287,7 @@ def handle_default_request():
 		content = resp.content
 		status_code = resp.status_code
 		headers = dict(resp.headers)
+		content, headers = render_if_needed(resp, content, headers)
 		return process_response((content, status_code, headers), url)
 	except requests.exceptions.ConnectionError as e:
 		error_args = str(e.args)
@@ -296,6 +300,24 @@ def handle_default_request():
 	except Exception as e:
 		print(f"Error in handle_default_request: {str(e)}")
 		return abort(500, ERROR_HEADER + str(e))
+
+def render_if_needed(resp, content, headers):
+	"""With RENDER_JAVASCRIPT on, replace an HTML page by its DOM after the page's scripts have run on the server."""
+	if request.method != "GET" or resp.status_code >= 400:
+		return content, headers
+	media_type = next((v for k, v in headers.items() if k.lower() == 'content-type'), '').split(';')[0].strip().lower()
+	if media_type not in ('text/html', 'application/xhtml+xml'):
+		return content, headers
+	# Render the final URL (after redirects), so the page sees the address the browser would end up on
+	target = resp.url or request.url
+	if not render_utils.should_render(target, config):
+		return content, headers
+	html = render_utils.render_page(target, config, request.headers.get("Accept-Language"))
+	if not html:
+		return content, headers  # rendering failed: fall back to the page as the site sent it
+	headers = {k: v for k, v in headers.items() if k.lower() not in ('content-type', 'content-length', 'content-encoding')}
+	headers['Content-Type'] = 'text/html; charset=utf-8'
+	return html.encode('utf-8'), headers
 
 def prepare_headers():
 	headers = {

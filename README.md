@@ -57,7 +57,7 @@ Browsers with no flexbox/grid support (Classilla) would otherwise stack every fl
 
 Spacing is compensated so edges and total height match the modern layout. Layouts that cannot be expressed (reversed directions, `order`, grid spans / named areas / explicit placement) fall back to plain stacking. Linked stylesheets are fetched and cached for 10 minutes, and emulation is skipped (the page is served unmodified) if it takes longer than a few seconds.
 
-The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils tests.test_layout_utils tests.test_site_overrides tests.test_image_scale` (needs `tinycss2`, `beautifulsoup4`, `html5lib`, `Pillow`).
+The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils tests.test_layout_utils tests.test_site_overrides tests.test_image_scale tests.test_render_utils tests.test_html_utils_svg` (needs `tinycss2`, `beautifulsoup4`, `html5lib`, `Pillow`; the rendering and SVG tests are skipped unless Playwright / Flask / pillow-svg are installed, so the easiest way to run everything is inside the Docker image: `docker run --rm --entrypoint python3 macproxy_plus -m unittest discover -s tests -t .`).
 
 ### Scaling images by a percentage
 
@@ -70,6 +70,23 @@ IMAGE_SCALE_PERCENT = 25
 - It is applied before the `MAX_IMAGE_WIDTH` / `MAX_IMAGE_HEIGHT` cap, which still limits the result when `RESIZE_IMAGES` is `True`. Set `RESIZE_IMAGES = False` if you want the percentage alone.
 - `<img>` `width` / `height` attributes and inline `width:NNpx` / `height:NNpx` styles are scaled by the same percentage, so the page lays out at the smaller size instead of stretching the small image back up. Percentage and `auto` sizes are left alone. Images sized by an external stylesheet keep the stylesheet's size.
 - It works with every preset (presets do not set it), and with inline SVGs. Tiny images shrink too (a 24px icon at 25% is 6px), never below 1px.
+
+### Running JavaScript on the server
+
+Many modern sites (for example instapaper.com) are built entirely by JavaScript in the browser, so with scripts stripped they load blank. Set `RENDER_JAVASCRIPT = True` in `config.py` and macproxy loads each HTML page in a headless Chromium on the server, lets its scripts run, and sends your browser the finished page (still passed through script removal, CSS translation and layout emulation), so the browser never has to run any JavaScript itself:
+
+```python
+RENDER_JAVASCRIPT = True
+RENDER_JAVASCRIPT_SKIP_DOMAINS = ["example.com"]   # optional: never render these
+```
+
+- It is off by default. The Docker image includes Chromium (which makes the image roughly 2GB); if you run macproxy without Docker, install it with `pip install -r requirements.txt && playwright install chromium`.
+- Each page is rendered at the viewport size from your preset (`CSS_VIEWPORT_WIDTH` x `CSS_VIEWPORT_HEIGHT`), scrolled through once to trigger lazy-loaded content, and cached for `RENDER_CACHE_SECONDS` (default 300). A page that never stops loading is used as it stands after `RENDER_TIMEOUT` seconds (default 20).
+- Images, media and fonts are not downloaded while rendering (`RENDER_BLOCK_RESOURCES`); your browser fetches them through the proxy as usual.
+- It is best-effort: if rendering fails, the page is served exactly as the site sent it. Only `GET` pages are rendered; form posts and other requests are untouched.
+- It does not carry cookies or logins, and buttons that only work through JavaScript do nothing in the result (ordinary links and forms still work).
+- Rendering takes a few seconds the first time and a few hundred MB of memory; `RENDER_MAX_CONCURRENT` (default 2) limits how many pages render at once. For Docker, `docker-compose.yml` sets `shm_size: "1gb"`; add the same to your TrueNAS app.
+- `theverge.com`'s "no JavaScript" rule (below) still means no script is *sent to your browser*; with rendering on, the site's scripts do run on the server first.
 
 ### Per-site special cases
 

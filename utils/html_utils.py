@@ -210,7 +210,15 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 			attr = 'href'
 		elif 'xlink:href' in attrs:
 			attr = 'xlink:href'
+		else:
+			continue
+		# Only same-document references to a <symbol> can be inlined. Leave anything else (a <use> pointing at a
+		# plain shape, or at an external sprite sheet like "sprite.svg#icon") exactly as it is.
+		if not use_tag[attr].startswith('#'):
+			continue
 		symbol_tag = soup.find("symbol", {"id": use_tag[attr][1:]})
+		if symbol_tag is None:
+			continue
 		if 'viewBox' in symbol_tag.attrs and use_tag.parent.name == 'svg' and 'viewBox' not in use_tag.parent.attrs:
 			use_tag.parent["viewBox"] = symbol_tag["viewBox"]
 		symbol_tag_copy = copy.copy(symbol_tag)

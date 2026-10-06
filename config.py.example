@@ -39,6 +39,17 @@ ENABLED_EXTENSIONS = [
 #	"theverge.com": {"strip_javascript": False},  # turn a built-in default off
 #}
 
+# Run each page's JavaScript on the server (in a headless Chromium) and send the browser the finished page.
+# Lets script-built sites such as instapaper.com display on browsers that cannot run modern JavaScript.
+# Needs the Docker image (or `playwright install chromium`); uses noticeably more CPU and memory, and each page
+# takes a few seconds the first time. Rendered pages are cached for RENDER_CACHE_SECONDS.
+#RENDER_JAVASCRIPT = True
+#RENDER_JAVASCRIPT_SKIP_DOMAINS = ["example.com"]   # sites that should not be rendered
+#RENDER_TIMEOUT = 20                                # seconds before we use whatever has loaded
+#RENDER_MAX_CONCURRENT = 2                          # pages rendered at once
+#RENDER_BLOCK_RESOURCES = ["image", "media", "font"] # not downloaded while rendering (the DOM does not need them)
+#RENDER_CACHE_SECONDS = 300
+
 # While SIMPLIFY_HTML is True, you can use WHITELISTED_DOMAINS to disable post-processing for
 # specific sites (only perform HTTPS -> HTTP conversion and character conversion (if CONVERT_CHARACTERS is True),
 # without otherwise modifying the page's source code).

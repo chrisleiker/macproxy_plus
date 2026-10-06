@@ -4,6 +4,8 @@ services:
     image: macproxy_plus
     container_name: macproxy_plus
     restart: unless-stopped
+    # Headless Chromium (RENDER_JAVASCRIPT) needs shared memory; Docker's 64MB default is too small
+    shm_size: "1gb"
     ports:
       - "${PORT:-5001}:${PORT:-5001}"
     environment:
