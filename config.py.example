@@ -31,6 +31,14 @@ ENABLED_EXTENSIONS = [
 	#"wikipedia",
 ]
 
+# Per-site special cases, applied whatever preset is active. Currently supports "strip_javascript",
+# which removes all JavaScript from a site's pages and serves its script files empty.
+# theverge.com has it on by default (see utils/site_overrides.py); entries here are merged over the defaults.
+#SITE_OVERRIDES = {
+#	"example.com": {"strip_javascript": True},
+#	"theverge.com": {"strip_javascript": False},  # turn a built-in default off
+#}
+
 # While SIMPLIFY_HTML is True, you can use WHITELISTED_DOMAINS to disable post-processing for
 # specific sites (only perform HTTPS -> HTTP conversion and character conversion (if CONVERT_CHARACTERS is True),
 # without otherwise modifying the page's source code).

@@ -10,7 +10,7 @@ from bs4.formatter import HTMLFormatter
 from flask import current_app, url_for
 
 # First-party imports
-from utils import css_utils, layout_utils
+from utils import css_utils, js_utils, layout_utils, site_overrides
 from utils.image_utils import fetch_and_cache_image
 from utils.system_utils import load_preset
 
@@ -165,6 +165,10 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 		from urllib.parse import urlparse
 		domain = urlparse(url).netloc
 		is_whitelisted = any(domain.endswith(whitelisted) for whitelisted in whitelisted_domains)
+
+	# Per-site special case: remove all JavaScript, whatever the preset or whitelist says
+	if url and site_overrides.strips_javascript(url, config):
+		js_utils.strip_javascript(soup)
 
 	# Only perform tag/attribute stripping if the domain is not whitelisted and SIMPLIFY_HTML is True
 	if simplify_html and not is_whitelisted:

@@ -13,7 +13,7 @@ from werkzeug.serving import get_interface_ip
 from werkzeug.wrappers.response import Response as WerkzeugResponse
 
 # First-party imports
-from utils import css_utils
+from utils import css_utils, js_utils, site_overrides
 from utils.html_utils import transcode_html, transcode_content
 from utils.image_utils import is_image_url, fetch_and_cache_image, CACHE_DIR
 from utils.system_utils import load_preset
@@ -206,6 +206,11 @@ def process_response(response, url):
 			content = b''
 		response = Response(content, status_code)
 		response.headers['Content-Type'] = 'text/css; charset=utf-8'
+		return response
+	if js_utils.is_javascript_content_type(media_type) and site_overrides.strips_javascript(url, config):
+		# Site is configured to run no JavaScript: serve an empty script instead of the real one
+		response = Response(b'', status_code)
+		response.headers['Content-Type'] = content_type
 		return response
 	if media_type in ['text/css', 'text/javascript', 'application/javascript', 'application/x-javascript']:
 		content = transcode_content(content)

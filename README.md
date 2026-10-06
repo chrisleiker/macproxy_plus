@@ -59,6 +59,17 @@ Spacing is compensated so edges and total height match the modern layout. Layout
 
 The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils tests.test_layout_utils` (needs `tinycss2`, `beautifulsoup4`, `html5lib`).
 
+### Per-site special cases
+
+`utils/site_overrides.py` holds settings that apply to a specific site (the domain and its subdomains) whichever preset is active. The only setting so far is `strip_javascript`, which removes every `<script>`, inline `on*` handler, `javascript:` link and script preload from the site's pages, and serves its script files empty. `theverge.com` has it on by default. Add your own, or switch a default off, in `config.py`:
+
+```python
+SITE_OVERRIDES = {
+	"example.com": {"strip_javascript": True},
+	"theverge.com": {"strip_javascript": False},
+}
+```
+
 ### Running with Docker
 
 ```shell
