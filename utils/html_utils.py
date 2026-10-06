@@ -11,7 +11,7 @@ from bs4.formatter import HTMLFormatter
 from flask import current_app, url_for
 
 # First-party imports
-from utils import css_utils, image_scale, js_utils, layout_utils, site_overrides
+from utils import adblock, css_utils, image_scale, js_utils, layout_utils, site_overrides
 from utils.image_utils import fetch_and_cache_image
 from utils.system_utils import load_preset
 
@@ -166,6 +166,13 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 				tag['href'] = tag['href'].replace('https://', 'http://')
 			elif tag['href'].startswith('//'):  # Handle protocol-relative URLs
 				tag['href'] = 'http:' + tag['href']
+
+	# Remove ads and trackers: tags that load a blocked URL, and elements the filter lists' hiding rules match
+	ad_manager = adblock.get()
+	if ad_manager is not None and ad_manager.enabled and url:
+		removed = ad_manager.filter_page(soup, url)
+		if removed['requests'] or removed['cosmetic']:
+			print(f"Adblock: removed {removed['requests']} blocked tags and {removed['cosmetic']} ad elements from {url[:80]}")
 
 	# Check if domain is whitelisted
 	is_whitelisted = False

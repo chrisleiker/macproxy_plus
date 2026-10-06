@@ -5,6 +5,8 @@ import mimetypes
 import os
 import shutil
 import socket
+import threading
+import time
 from html import escape
 from urllib.parse import urlparse, urlunparse
 
@@ -15,7 +17,7 @@ from werkzeug.serving import get_interface_ip
 from werkzeug.wrappers.response import Response as WerkzeugResponse
 
 # First-party imports
-from utils import cookie_utils, css_utils, js_utils, render_utils, site_overrides
+from utils import adblock, cookie_utils, css_utils, js_utils, render_utils, site_overrides
 from utils.html_utils import transcode_html, transcode_content
 from utils.image_utils import is_image_url, fetch_and_cache_image, CACHE_DIR
 from utils.system_utils import load_preset
@@ -51,6 +53,9 @@ ENABLED_EXTENSIONS = config.ENABLED_EXTENSIONS
 # Per-client cookie jars, shared by the proxy's own requests and the headless browser
 cookie_store = cookie_utils.store_from_config(config)
 
+# Ad and tracker blocking (does nothing unless ADBLOCK = True); the lists load in the background
+adblock_manager = adblock.init(config)
+
 # Start headless Chromium in the background if JavaScript rendering is on, so the first page is not slow
 render_utils.warm_up(config)
 
@@ -68,6 +73,8 @@ for ext in ENABLED_EXTENSIONS:
 		raise SystemExit(1)
 	extensions[ext] = module
 	domain_to_extension[module.DOMAIN] = module
+# Extensions generate their own pages, which the ad filter must leave alone
+adblock_manager.skip_domains = set(domain_to_extension)
 
 def image_mimetype(filename):
 	# Cached images may be gif, png, jpeg, etc. depending on CONVERT_IMAGES_TO_FILETYPE
@@ -107,6 +114,10 @@ def handle_request(path):
 	if override_extension:
 		print(f'Current override extension: {override_extension}')
 
+	blocked_response = block_if_ad(host)
+	if blocked_response is not None:
+		return blocked_response
+
 	override_response = handle_override_extension(scheme)
 	if override_response is not None:
 		return process_response(override_response, request.url)
@@ -143,6 +154,28 @@ def check_override_status(extension_name):
 	if hasattr(extensions[extension_name], 'get_override_status') and not extensions[extension_name].get_override_status():
 		override_extension = None
 		print("Override disabled")
+
+def block_if_ad(host):
+	"""Answer requests for ad and tracker URLs with an empty stand-in instead of fetching them (see utils/adblock.py)."""
+	if not adblock_manager.enabled or find_matching_extension(host) or override_extension:
+		return None
+	accept = request.headers.get("Accept", "")
+	referer = request.headers.get("Referer")
+	# A page the person asked for directly (typed or bookmarked, so no referring page) is never blocked
+	if not referer and ("text/html" in accept or not accept):
+		return None
+	page_host = (urlparse(referer).hostname or "").lower() if referer else None
+	rtype = adblock.guess_request_type(request.url, accept, has_referer=bool(referer))
+	rule = adblock_manager.should_block(request.url, rtype, page_host)
+	if not rule:
+		return None
+	print(f"Adblock: blocked {request.url[:100]} ({rtype}) by {rule[:60]}")
+	body, content_type = adblock.stub_response(request.url, rtype, accept)
+	response = Response(body, status=200, mimetype=content_type.split(';')[0])
+	response.headers["Content-Type"] = content_type
+	response.headers["X-Macproxy-Blocked"] = rule[:100].replace("\n", " ")
+	response.headers["Cache-Control"] = "max-age=3600"
+	return response
 
 def find_matching_extension(host):
 	for domain, extension in domain_to_extension.items():
@@ -454,6 +487,51 @@ def handle_form_replay():
 	# Show the result at its own address (so reloading and relative links behave), without a fragment
 	location = with_scheme(final_url.split("#")[0], "http")
 	return Response(status=303, headers={"Location": location})
+
+def _adblock_page(message="", tested=""):
+	m = adblock_manager
+	size = m.engine.size
+	def row(cells):
+		return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+	if not m.enabled:
+		body = "<p>Ad blocking is off. Set <code>ADBLOCK = True</code> in config.py to turn it on.</p>"
+	else:
+		lists = []
+		for source in m.sources:
+			st = m.status.get(source, {})
+			updated = time.strftime("%Y-%m-%d %H:%M", time.localtime(st["updated"])) if st.get("updated") else "not downloaded"
+			lists.append(row([escape(source[:80]), st.get("rules", ""), updated, escape(st.get("error") or "")]))
+		top = "".join(row([escape(h), n]) for h, n in m.blocked.most_common(25)) or row(["nothing blocked yet", ""])
+		body = (f"<p>Blocking {size['network_rules']} request rules ({size['exceptions']} exceptions) and {size['hide_rules']} element rules.</p>"
+				f"<p>Requests blocked: {m.total_blocked}. Elements removed from pages: {m.cosmetic_removed}.</p>"
+				"<h2>Lists</h2><table border=\"1\" cellpadding=\"4\"><tr><th>List</th><th>Lines</th><th>Updated</th><th>Problem</th></tr>"
+				+ "".join(lists) + "</table>"
+				"<form method=\"post\" action=\"/__mp/adblock/refresh\"><input type=\"submit\" value=\"Update lists now\"></form>"
+				"<h2>Most blocked hosts</h2><table border=\"1\" cellpadding=\"4\"><tr><th>Host</th><th>Blocked</th></tr>" + top + "</table>"
+				"<h2>Test a URL</h2><form method=\"get\" action=\"/__mp/adblock\">URL: <input type=\"text\" name=\"url\" size=\"60\" value=\""
+				+ escape(tested, quote=True) + "\"> Page it is on: <input type=\"text\" name=\"page\" size=\"20\"> <input type=\"submit\" value=\"Test\"></form>")
+	return ("<html><head><title>Macproxy ad blocking</title></head><body><h1>Macproxy ad blocking</h1>" + message + body + "</body></html>")
+
+@app.route("/__mp/adblock", methods=["GET"])
+def adblock_status():
+	tested = request.args.get("url", "").strip()
+	message = ""
+	if tested and adblock_manager.enabled:
+		page_host = (urlparse(request.args.get("page", "").strip() if "//" in request.args.get("page", "") else "//" + request.args.get("page", "").strip()).hostname or "") or None
+		rtype = adblock.guess_request_type(tested, "", has_referer=bool(page_host))
+		rule = adblock_manager.engine.match(tested, rtype, page_host) if not adblock_manager.allowed(tested, page_host) else None
+		message = (f"<p><b>{escape(tested)}</b> ({rtype}) would be <b>blocked</b> by <code>{escape(rule)}</code></p>" if rule
+				   else f"<p><b>{escape(tested)}</b> ({rtype}) would <b>not</b> be blocked.</p>")
+	return Response(_adblock_page(message, tested), mimetype="text/html")
+
+@app.route("/__mp/adblock/refresh", methods=["POST"])
+def adblock_refresh():
+	if adblock_manager.enabled:
+		threading.Thread(target=lambda: adblock_manager.refresh(force=True), daemon=True).start()
+		message = "<p>Updating the lists in the background. Reload this page in a minute.</p>"
+	else:
+		message = ""
+	return Response(_adblock_page(message), mimetype="text/html")
 
 def _cookie_page(message=""):
 	rows = []

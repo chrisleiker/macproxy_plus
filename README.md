@@ -57,7 +57,7 @@ Browsers with no flexbox/grid support (Classilla) would otherwise stack every fl
 
 Spacing is compensated so edges and total height match the modern layout. Layouts that cannot be expressed (reversed directions, `order`, grid spans / named areas / explicit placement) fall back to plain stacking. Linked stylesheets are fetched and cached for 10 minutes, and emulation is skipped (the page is served unmodified) if it takes longer than a few seconds.
 
-The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils tests.test_layout_utils tests.test_site_overrides tests.test_image_scale tests.test_render_utils tests.test_html_utils_svg tests.test_cookie_utils tests.test_login_cookies` (needs `tinycss2`, `beautifulsoup4`, `html5lib`, `Pillow`; the rendering and SVG tests are skipped unless Playwright / Flask / pillow-svg are installed, so the easiest way to run everything is inside the Docker image: `docker run --rm --entrypoint python3 macproxy_plus -m unittest discover -s tests -t .`).
+The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils tests.test_layout_utils tests.test_site_overrides tests.test_image_scale tests.test_render_utils tests.test_html_utils_svg tests.test_cookie_utils tests.test_login_cookies tests.test_adblock tests.test_adblock_proxy` (needs `tinycss2`, `beautifulsoup4`, `html5lib`, `Pillow`; the rendering and SVG tests are skipped unless Playwright / Flask / pillow-svg are installed, so the easiest way to run everything is inside the Docker image: `docker run --rm --entrypoint python3 macproxy_plus -m unittest discover -s tests -t .`).
 
 ### Scaling images by a percentage
 
@@ -87,6 +87,22 @@ RENDER_JAVASCRIPT_SKIP_DOMAINS = ["example.com"]   # optional: never render thes
 - Cookies and logins are supported (see below). Buttons that only work through JavaScript, other than form submit buttons, still do nothing in the result; ordinary links and forms work.
 - Rendering takes a few seconds the first time and a few hundred MB of memory; `RENDER_MAX_CONCURRENT` (default 2) limits how many pages render at once. For Docker, `docker-compose.yml` sets `shm_size: "1gb"`; add the same to your TrueNAS app.
 - `theverge.com`'s "no JavaScript" rule (below) still means no script is *sent to your browser*; with rendering on, the site's scripts do run on the server first.
+
+### Ad and tracker blocking
+
+Set `ADBLOCK = True` in `config.py` to block ads and trackers, which also saves an old machine from downloading them:
+
+```python
+ADBLOCK = True
+```
+
+It works in three places: (1) requests your browser makes to ad and tracker URLs are answered with an empty stand-in (a 1x1 GIF, empty script or stylesheet) instead of being fetched; (2) the headless browser used for `RENDER_JAVASCRIPT` is not allowed to load them either, which makes rendering faster and keeps tracking cookies out; (3) elements still left in a page are removed: tags that load a blocked URL, plus whatever the filter lists' element-hiding rules match (ad slots, "sponsored" boxes, ad-feedback pop-ups).
+
+- **Filter lists** are downloaded in the background and refreshed daily: EasyList, EasyPrivacy and Peter Lowe's list by default (about 110,000 blocking rules and 30,000 element rules). Until they arrive, and whenever there is no network, a small built-in list is used. Downloaded lists are cached in `ADBLOCK_CACHE_DIR` (default `/app/data/adblock` if that folder exists, so a mounted `./data` volume keeps them across restarts). Use `ADBLOCK_LISTS = [...]` to choose your own lists (URLs or file paths; Adblock Plus/uBlock syntax or hosts files).
+- **Fixing a broken site:** `ADBLOCK_ALLOWLIST = ["example.com"]` turns blocking off for a domain and for every page on it. `http://<any-site>/__mp/adblock` shows the lists, what has been blocked, and a box to test a URL ("would this be blocked, and by which rule?").
+- **Your own rules** go in `ADBLOCK_CUSTOM_RULES = ["||ads.example.com^", "example.com##.promo"]`. `ADBLOCK_COSMETIC = False` blocks requests but leaves page elements alone.
+- A page you type or bookmark yourself is never blocked, and neither are pages served by extensions. Rules that need features macproxy lacks (scriptlets, `:has-text()`, redirects, ...) are skipped, not guessed at.
+- It costs about 60MB of memory and well under half a second per page.
 
 ### Logins and cookies
 

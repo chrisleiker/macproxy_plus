@@ -225,16 +225,32 @@ async def _new_context(browser, config, accept_language, cookies, auth):
 	return context
 
 
-async def _prepare_page(context, config):
-	"""A page that does not download the resource types the DOM does not need."""
+# Playwright resource types as the filter lists name them
+AD_RESOURCE_TYPES = {"document": "subdocument", "stylesheet": "stylesheet", "image": "image", "media": "media", "font": "font",
+					 "script": "script", "xhr": "xmlhttprequest", "fetch": "xmlhttprequest", "ping": "ping", "websocket": "websocket"}
+
+
+async def _prepare_page(context, config, target_url=""):
+	"""A page that does not download what the DOM does not need, nor anything the ad blocker refuses."""
+	from utils import adblock
+
 	blocked = set(_cfg(config, "RENDER_BLOCK_RESOURCES", ("image", "media", "font")))
+	ads = adblock.get()
+	first_party = (urlparse(target_url).hostname or "").lower()
 	page = await context.new_page()
 
 	async def route(r):
-		if r.request.resource_type in blocked:
-			await r.abort()
-		else:
-			await r.continue_()
+		request = r.request
+		if request.resource_type in blocked:
+			return await r.abort()
+		if ads is not None and ads.enabled:
+			# The page being rendered is never blocked, only what it loads
+			is_main_navigation = request.is_navigation_request() and request.frame == page.main_frame
+			if not is_main_navigation:
+				rtype = AD_RESOURCE_TYPES.get(request.resource_type, "other")
+				if ads.should_block(request.url, rtype, first_party):
+					return await r.abort()
+		await r.continue_()
 
 	await page.route("**/*", route)
 	return page
@@ -274,7 +290,7 @@ async def _render(url, config, accept_language, cookies, auth):
 		browser = await _get_browser(config)
 		context = await _new_context(browser, config, accept_language, cookies, auth)
 		try:
-			page = await _prepare_page(context, config)
+			page = await _prepare_page(context, config, url)
 			try:
 				await page.goto(url, wait_until="domcontentloaded", timeout=max(0.5, timeout - (time.time() - started)) * 1000)
 			except PlaywrightTimeout:
@@ -357,7 +373,7 @@ async def _submit(url, index, fields, config, accept_language, cookies, auth):
 		browser = await _get_browser(config)
 		context = await _new_context(browser, config, accept_language, cookies, auth)
 		try:
-			page = await _prepare_page(context, config)
+			page = await _prepare_page(context, config, url)
 			try:
 				await page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
 			except PlaywrightTimeout:

@@ -50,6 +50,17 @@ ENABLED_EXTENSIONS = [
 #RENDER_BLOCK_RESOURCES = ["image", "media", "font"] # not downloaded while rendering (the DOM does not need them)
 #RENDER_CACHE_SECONDS = 300
 
+# Block ads and trackers (filter lists are downloaded in the background and refreshed daily). Requests to ad
+# and tracker URLs get an empty answer, the headless browser (RENDER_JAVASCRIPT) does not load them, and ad
+# elements are removed from pages. See http://<any-site>/__mp/adblock for status and a URL tester.
+#ADBLOCK = True
+#ADBLOCK_ALLOWLIST = ["example.com"]            # never block these domains, or anything on pages from them
+#ADBLOCK_CUSTOM_RULES = ["||ads.example.com^", "example.com##.promo"]   # filter-list syntax
+#ADBLOCK_COSMETIC = True                        # False: block requests only, leave page elements alone
+#ADBLOCK_LISTS = ["https://easylist.to/easylist/easylist.txt"]          # default: EasyList, EasyPrivacy, Peter Lowe's
+#ADBLOCK_UPDATE_HOURS = 24
+#ADBLOCK_CACHE_DIR = "/app/data/adblock"        # where downloaded lists are kept
+
 # Logins and cookies. Cookies live on the proxy, one jar per device (IP address), shared by the proxy and the
 # headless browser; your browser never holds them. They are kept in memory unless you set a file.
 #COOKIE_JAR_FILE = "/app/data/cookies.json"   # keep logins across restarts (file mode 0600; mount a volume for it)
