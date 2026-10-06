@@ -90,6 +90,10 @@ ATTRIBUTES_TO_STRIP = [
 
 # Process images for optimal rendering on your device/browser:
 CAN_RENDER_INLINE_IMAGES = False # Mostly used to conditionally enable landing page images (ex: waybackmachine.py)
+# Scale every image to this percentage of its original size, e.g. 25 for a quarter. Leave as None (or 100) to
+# keep the original size. This happens first; MAX_IMAGE_WIDTH/HEIGHT below still cap the result if RESIZE_IMAGES is True.
+# <img> width/height attributes are scaled to match.
+IMAGE_SCALE_PERCENT = None
 RESIZE_IMAGES = True
 MAX_IMAGE_WIDTH = 512 # Only used if RESIZE_IMAGES is True
 MAX_IMAGE_HEIGHT = 342 # Only used if RESIZE_IMAGES is True

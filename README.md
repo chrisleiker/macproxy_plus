@@ -57,7 +57,19 @@ Browsers with no flexbox/grid support (Classilla) would otherwise stack every fl
 
 Spacing is compensated so edges and total height match the modern layout. Layouts that cannot be expressed (reversed directions, `order`, grid spans / named areas / explicit placement) fall back to plain stacking. Linked stylesheets are fetched and cached for 10 minutes, and emulation is skipped (the page is served unmodified) if it takes longer than a few seconds.
 
-The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils tests.test_layout_utils` (needs `tinycss2`, `beautifulsoup4`, `html5lib`).
+The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils tests.test_layout_utils tests.test_site_overrides tests.test_image_scale` (needs `tinycss2`, `beautifulsoup4`, `html5lib`, `Pillow`).
+
+### Scaling images by a percentage
+
+Set `IMAGE_SCALE_PERCENT` in `config.py` to shrink every image to a percentage of its original size, for example `IMAGE_SCALE_PERCENT = 25` for a quarter (leave it `None`, or `100`, to keep the original size):
+
+```python
+IMAGE_SCALE_PERCENT = 25
+```
+
+- It is applied before the `MAX_IMAGE_WIDTH` / `MAX_IMAGE_HEIGHT` cap, which still limits the result when `RESIZE_IMAGES` is `True`. Set `RESIZE_IMAGES = False` if you want the percentage alone.
+- `<img>` `width` / `height` attributes and inline `width:NNpx` / `height:NNpx` styles are scaled by the same percentage, so the page lays out at the smaller size instead of stretching the small image back up. Percentage and `auto` sizes are left alone. Images sized by an external stylesheet keep the stylesheet's size.
+- It works with every preset (presets do not set it), and with inline SVGs. Tiny images shrink too (a 24px icon at 25% is 6px), never below 1px.
 
 ### Per-site special cases
 

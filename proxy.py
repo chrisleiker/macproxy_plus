@@ -69,17 +69,20 @@ def image_mimetype(filename):
 def serve_cached_image(filename):
 	return send_from_directory(CACHE_DIR, filename, mimetype=image_mimetype(filename))
 
-def handle_image_request(url):
-	# Pass config values to fetch_and_cache_image
-	cached_url = fetch_and_cache_image(
-		url,
+def image_options():
+	# Image settings from config (after any preset has been applied), as fetch_and_cache_image keyword arguments
+	return dict(
 		resize=config.RESIZE_IMAGES,
 		max_width=config.MAX_IMAGE_WIDTH,
 		max_height=config.MAX_IMAGE_HEIGHT,
 		convert=config.CONVERT_IMAGES,
 		convert_to=config.CONVERT_IMAGES_TO_FILETYPE,
-		dithering=config.DITHERING_ALGORITHM
+		dithering=config.DITHERING_ALGORITHM,
+		scale_percent=getattr(config, 'IMAGE_SCALE_PERCENT', None)
 	)
+
+def handle_image_request(url):
+	cached_url = fetch_and_cache_image(url, **image_options())
 	if cached_url:
 		return send_from_directory(CACHE_DIR, os.path.basename(cached_url), mimetype=image_mimetype(cached_url))
 	else:
@@ -176,16 +179,7 @@ def process_response(response, url):
 
 	if content_type.startswith('image/'):
 		# For image content, use the fetch_and_cache_image function with config values
-		cached_url = fetch_and_cache_image(
-			url,
-			content,
-			resize=config.RESIZE_IMAGES,
-			max_width=config.MAX_IMAGE_WIDTH,
-			max_height=config.MAX_IMAGE_HEIGHT,
-			convert=config.CONVERT_IMAGES,
-			convert_to=config.CONVERT_IMAGES_TO_FILETYPE,
-			dithering=config.DITHERING_ALGORITHM
-		)
+		cached_url = fetch_and_cache_image(url, content, **image_options())
 		if cached_url:
 			return send_from_directory(CACHE_DIR, os.path.basename(cached_url), mimetype=image_mimetype(cached_url))
 		else:

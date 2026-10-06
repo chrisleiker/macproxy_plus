@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import html
+import os
 import re
 
 # Third-party imports
@@ -10,7 +11,7 @@ from bs4.formatter import HTMLFormatter
 from flask import current_app, url_for
 
 # First-party imports
-from utils import css_utils, js_utils, layout_utils, site_overrides
+from utils import css_utils, image_scale, js_utils, layout_utils, site_overrides
 from utils.image_utils import fetch_and_cache_image
 from utils.system_utils import load_preset
 
@@ -234,7 +235,7 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 		fake_url = hashlib.md5(str(tag).encode()).hexdigest()
 		convert = config.CONVERT_IMAGES
 		convert_to = config.CONVERT_IMAGES_TO_FILETYPE
-		fetch_and_cache_image(
+		cached = fetch_and_cache_image(
 			fake_url,
 			str(tag).encode('utf-8'),
 			resize=config.RESIZE_IMAGES,
@@ -244,13 +245,15 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 			convert_to=convert_to,
 			dithering=config.DITHERING_ALGORITHM,
 			hash_url=False,
+			scale_percent=getattr(config, 'IMAGE_SCALE_PERCENT', None),
 		)
-		extension = convert_to.lower() if convert and convert_to else "gif"
+		# The cache names the file after its real format, so use the name it returned
+		cached_name = os.path.basename(cached) if cached else f"{fake_url}.gif"
 
 		# The _external=True attribute of `url_for` doesn't work here, and will
 		# always return `localhost` instead of our host IP / port. So grab that
 		# info from the app config directly and prepend it to a relative URL instead.
-		relative_url = url_for('serve_cached_image', filename=f"{fake_url}.{extension}")
+		relative_url = url_for('serve_cached_image', filename=cached_name)
 		url = f"http://{current_app.config['MACPROXY_HOST_AND_PORT']}{relative_url}"
 		img_attrs = {"src": url}
 		if "height" in svg_attrs:
@@ -259,6 +262,12 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 			img_attrs["width"] = svg_attrs["width"]
 		img = soup.new_tag("img", **img_attrs)
 		tag.replace_with(img)
+
+	# Images are shrunk by IMAGE_SCALE_PERCENT, so shrink their displayed size to match
+	# (otherwise a width/height attribute would stretch the smaller file back up)
+	scale = image_scale.normalize_percent(getattr(config, 'IMAGE_SCALE_PERCENT', None))
+	if scale:
+		image_scale.scale_img_tags(soup, scale)
 
 	# Use the custom formatter when converting the soup back to a string
 	html = soup.decode(formatter=URLAwareHTMLFormatter())
