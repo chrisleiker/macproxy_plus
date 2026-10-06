@@ -44,6 +44,9 @@ DITHERING_ALGORITHM = None
 
 CSS_MODE = "downlevel"
 
+# Re-create flexbox and grid layouts with CSS tables and floats (see utils/layout_utils.py)
+LAYOUT_EMULATION = True
+
 # Size of the browser window's content area, used to evaluate @media queries and vw/vh units.
 # A 17" iMac G4 is 1024x768; the 20" model is 1280x960.
 CSS_VIEWPORT_WIDTH = 1024
@@ -113,12 +116,12 @@ CSS_UNSUPPORTED_SELECTORS = [
 
 # Properties to rename (the list may include the original name). Gecko of this era used -moz- prefixes.
 CSS_PROPERTY_RENAMES = {
-	"border-radius": ["-moz-border-radius"],
-	"border-top-left-radius": ["-moz-border-radius-topleft"],
-	"border-top-right-radius": ["-moz-border-radius-topright"],
-	"border-bottom-left-radius": ["-moz-border-radius-bottomleft"],
-	"border-bottom-right-radius": ["-moz-border-radius-bottomright"],
-	"box-sizing": ["-moz-box-sizing"],
+	"border-radius": ["-moz-border-radius", "border-radius"],
+	"border-top-left-radius": ["-moz-border-radius-topleft", "border-top-left-radius"],
+	"border-top-right-radius": ["-moz-border-radius-topright", "border-top-right-radius"],
+	"border-bottom-left-radius": ["-moz-border-radius-bottomleft", "border-bottom-left-radius"],
+	"border-bottom-right-radius": ["-moz-border-radius-bottomright", "border-bottom-right-radius"],
+	"box-sizing": ["-moz-box-sizing", "box-sizing"],
 	"opacity": ["-moz-opacity", "opacity"],
 }
 

@@ -44,7 +44,20 @@ Two presets use it, selected with `PRESET = "..."` in `config.py`:
 - `classilla` - Classilla on Mac OS 9 (Mozilla 1.3.1 engine): full translation
 - `powerfox` - PowerFox on Mac OS X 10.4 Tiger (modern UXP engine): only newer syntax is translated
 
-The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils` (needs `tinycss2`).
+#### Flexbox and grid emulation
+
+Browsers with no flexbox/grid support (Classilla) would otherwise stack every flex/grid item vertically. With `LAYOUT_EMULATION = True` (enabled in the `classilla` preset), `utils/layout_utils.py` reads the page's stylesheets on the server, works out which elements are flex/grid containers, and re-expresses their layout with CSS 2.1 table display values and floats, as inline styles:
+
+| Modern layout | Emulated as |
+|---|---|
+| `flex` row | `display:table` container, `display:table-cell` items (`gap` -> `border-spacing`, `flex-grow` / `flex-basis` -> cell widths, `justify-content` / `align-items` -> margins / `vertical-align`) |
+| `flex-wrap: wrap` | floated items plus a clearing element |
+| `flex-direction: column` | normal block flow (gap -> margins, centered items shrink-wrapped) |
+| `grid` with N columns | `display:table` container, rows wrapped in `display:table-row`, cells sized to the tracks (`repeat()`, `fr`, `px`, `%`, `auto-fill` / `auto-fit`) |
+
+Spacing is compensated so edges and total height match the modern layout. Layouts that cannot be expressed (reversed directions, `order`, grid spans / named areas / explicit placement) fall back to plain stacking. Linked stylesheets are fetched and cached for 10 minutes, and emulation is skipped (the page is served unmodified) if it takes longer than a few seconds.
+
+The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils tests.test_layout_utils` (needs `tinycss2`, `beautifulsoup4`, `html5lib`).
 
 ### Running with Docker
 

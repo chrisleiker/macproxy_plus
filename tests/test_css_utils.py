@@ -139,7 +139,6 @@ class PropertyTests(unittest.TestCase):
 	def test_renames(self):
 		out = d("p{border-radius:4px;opacity:.5}")
 		self.assertIn("-moz-border-radius:4px", out)
-		self.assertNotIn(";border-radius", out)
 		self.assertIn("-moz-opacity:.5;opacity:.5", out)
 
 	def test_inset_expansion_and_logical(self):

@@ -10,7 +10,7 @@ from bs4.formatter import HTMLFormatter
 from flask import current_app, url_for
 
 # First-party imports
-from utils import css_utils
+from utils import css_utils, layout_utils
 from utils.image_utils import fetch_and_cache_image
 from utils.system_utils import load_preset
 
@@ -76,6 +76,10 @@ def downlevel_page_css(soup, url):
 				css_utils.collect_vars(tag.string, settings, url, site_vars)
 			except Exception as e:
 				print(f"CSS variable collection failed: {e}")
+
+	# Flexbox/grid emulation reads the original CSS, so it has to run before that CSS is translated
+	if getattr(config, 'LAYOUT_EMULATION', False):
+		layout_utils.emulate_layout(soup, url, settings, site_vars)
 
 	for tag in style_tags:
 		if not tag.string:
