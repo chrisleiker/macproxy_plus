@@ -1,5 +1,6 @@
 # Standard library imports
 import argparse
+import mimetypes
 import os
 import shutil
 import socket
@@ -12,6 +13,7 @@ from werkzeug.serving import get_interface_ip
 from werkzeug.wrappers.response import Response as WerkzeugResponse
 
 # First-party imports
+from utils import css_utils
 from utils.html_utils import transcode_html, transcode_content
 from utils.image_utils import is_image_url, fetch_and_cache_image, CACHE_DIR
 from utils.system_utils import load_preset
@@ -59,9 +61,13 @@ for ext in ENABLED_EXTENSIONS:
 	extensions[ext] = module
 	domain_to_extension[module.DOMAIN] = module
 
+def image_mimetype(filename):
+	# Cached images may be gif, png, jpeg, etc. depending on CONVERT_IMAGES_TO_FILETYPE
+	return mimetypes.guess_type(filename)[0] or 'image/gif'
+
 @app.route("/cached_image/<path:filename>")
 def serve_cached_image(filename):
-	return send_from_directory(CACHE_DIR, filename, mimetype='image/gif')
+	return send_from_directory(CACHE_DIR, filename, mimetype=image_mimetype(filename))
 
 def handle_image_request(url):
 	# Pass config values to fetch_and_cache_image
@@ -75,7 +81,7 @@ def handle_image_request(url):
 		dithering=config.DITHERING_ALGORITHM
 	)
 	if cached_url:
-		return send_from_directory(CACHE_DIR, os.path.basename(cached_url), mimetype='image/gif')
+		return send_from_directory(CACHE_DIR, os.path.basename(cached_url), mimetype=image_mimetype(cached_url))
 	else:
 		return abort(404, "Image not found or could not be processed")
 
@@ -164,7 +170,8 @@ def process_response(response, url):
 		status_code = 200
 		headers = {}
 
-	content_type = headers.get('Content-Type', '').lower()
+	# Header names are case-insensitive (some servers send 'content-type' or 'Content-type')
+	content_type = next((v for k, v in headers.items() if k.lower() == 'content-type'), '').lower()
 	print(f"Content-Type: {content_type}")
 
 	if content_type.startswith('image/'):
@@ -180,12 +187,27 @@ def process_response(response, url):
 			dithering=config.DITHERING_ALGORITHM
 		)
 		if cached_url:
-			return send_from_directory(CACHE_DIR, os.path.basename(cached_url), mimetype='image/gif')
+			return send_from_directory(CACHE_DIR, os.path.basename(cached_url), mimetype=image_mimetype(cached_url))
 		else:
 			return abort(404, "Image could not be processed")
 
-	# Handle CSS and JavaScript
-	if content_type in ['text/css', 'text/javascript', 'application/javascript', 'application/x-javascript']:
+	# Handle CSS and JavaScript (the media type may carry a "; charset=..." suffix)
+	media_type = content_type.split(';')[0].strip()
+	if media_type == 'text/css' and getattr(config, 'CSS_MODE', 'strip') == 'downlevel':
+		try:
+			css_settings = css_utils.settings_from_config(config)
+			site_vars = css_utils.get_site_vars(url)
+			text = css_utils.decode_css(content, content_type)
+			css_utils.collect_vars(text, css_settings, url, site_vars)
+			content = css_utils.downlevel_css(text, css_settings, url, site_vars).encode('utf-8')
+		except Exception as e:
+			# Fail open to the old behavior (an empty stylesheet) rather than serving CSS the browser may choke on
+			print(f"CSS downlevel failed for {url}: {e}")
+			content = b''
+		response = Response(content, status_code)
+		response.headers['Content-Type'] = 'text/css; charset=utf-8'
+		return response
+	if media_type in ['text/css', 'text/javascript', 'application/javascript', 'application/x-javascript']:
 		content = transcode_content(content)
 		response = Response(content, status_code)
 		response.headers['Content-Type'] = content_type

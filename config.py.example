@@ -43,6 +43,8 @@ WHITELISTED_DOMAINS = [
 # settings that follow below.
 # The default values target compatability with the MacWeb 2.0 browser.
 #PRESET = "wii_internet_channel"
+# Other presets: "macweb2" (the default behavior), "classilla" (Mac OS 9, translates CSS for the
+# old Mozilla engine) and "powerfox" (Mac OS X 10.4 Tiger, light-touch CSS translation).
 
 # --------------------------------------------------------------------------------------
 # *** One or more of the following settings may be overridden if you enable a preset ***

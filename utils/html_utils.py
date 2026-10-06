@@ -10,6 +10,7 @@ from bs4.formatter import HTMLFormatter
 from flask import current_app, url_for
 
 # First-party imports
+from utils import css_utils
 from utils.image_utils import fetch_and_cache_image
 from utils.system_utils import load_preset
 
@@ -61,6 +62,57 @@ def transcode_content(content):
 						content)
 	
 	return content.encode('utf-8')
+
+def downlevel_page_css(soup, url):
+	"""Rewrite <style> blocks, style="" attributes and <link> tags for browsers with limited CSS support."""
+	settings = css_utils.settings_from_config(config)
+	site_vars = css_utils.get_site_vars(url)
+
+	# Custom properties may be defined in a later <style> than the one using them, so collect first
+	style_tags = soup.find_all('style')
+	for tag in style_tags:
+		if tag.string:
+			try:
+				css_utils.collect_vars(tag.string, settings, url, site_vars)
+			except Exception as e:
+				print(f"CSS variable collection failed: {e}")
+
+	for tag in style_tags:
+		if not tag.string:
+			continue
+		if not css_utils.media_matches(tag.get('media'), settings):
+			tag.decompose()
+			continue
+		try:
+			tag.string = css_utils.downlevel_css(tag.string, settings, url, site_vars)
+		except Exception as e:
+			print(f"CSS downlevel failed for inline <style>: {e}")
+			tag.decompose()
+
+	for tag in soup.find_all(style=True):
+		try:
+			value = css_utils.downlevel_declarations(tag['style'], settings, site_vars)
+		except Exception as e:
+			print(f"CSS downlevel failed for style attribute: {e}")
+			value = ''
+		if value:
+			tag['style'] = value
+		else:
+			del tag['style']
+
+	for tag in soup.find_all('link'):
+		rel = [r.lower() for r in (tag.get('rel') or [])]
+		if 'stylesheet' in rel and 'alternate' not in rel:
+			if not css_utils.media_matches(tag.get('media'), settings):
+				tag.decompose()
+				continue
+			# The stylesheet is rewritten by the proxy, so integrity hashes would no longer match
+			for attr in ('integrity', 'crossorigin', 'nonce'):
+				tag.attrs.pop(attr, None)
+		elif not any(r in ('icon', 'shortcut') for r in rel):
+			# preload, prefetch, modulepreload, manifest, etc. are useless to an old browser
+			tag.decompose()
+
 
 def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False, 
 				  tags_to_unwrap=None, tags_to_strip=None, attributes_to_strip=None,
@@ -120,6 +172,11 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 			for attr in attributes_to_strip:
 				if attr in tag.attrs:
 					del tag[attr]
+
+	# Translate CSS for older browsers (only when a preset/config opts in via CSS_MODE = "downlevel").
+	# Sites on WHITELISTED_DOMAINS are left untouched here, like the other post-processing.
+	if getattr(config, 'CSS_MODE', 'strip') == 'downlevel' and not is_whitelisted:
+		downlevel_page_css(soup, url)
 
 	# Always handle meta refresh tags
 	for tag in soup.find_all('meta', attrs={'http-equiv': 'refresh'}):

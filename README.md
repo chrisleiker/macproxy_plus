@@ -30,6 +30,22 @@ To enable extensions:
 		]
 	```
 
+### CSS translation for older browsers
+
+By default, macproxy strips all styling from pages. A preset can instead set `CSS_MODE = "downlevel"`, which keeps each site's CSS but translates it for the target browser (see `utils/css_utils.py`):
+
+- `@import` and CSS nesting are flattened, `@layer` is unwrapped, `@media` / `@supports` are evaluated against a fixed viewport (`CSS_VIEWPORT_WIDTH` x `CSS_VIEWPORT_HEIGHT`)
+- `var()`, `calc()`, `min()`/`max()`/`clamp()`, `rem` and viewport units are resolved to plain values
+- `rgba()`/`hsl()`/`#rrggbbaa` become opaque hex colors (blended on white); gradients fall back to their first color
+- unsupported properties, values (e.g. `display: flex`), selectors and at-rules are dropped, so the browser never sees syntax it can't parse
+
+Two presets use it, selected with `PRESET = "..."` in `config.py`:
+
+- `classilla` - Classilla on Mac OS 9 (Mozilla 1.3.1 engine): full translation
+- `powerfox` - PowerFox on Mac OS X 10.4 Tiger (modern UXP engine): only newer syntax is translated
+
+The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils` (needs `tinycss2`).
+
 ### Running with Docker
 
 ```shell
