@@ -1,10 +1,12 @@
 # Standard library imports
 import argparse
+import base64
 import mimetypes
 import os
 import shutil
 import socket
-from urllib.parse import urlparse
+from html import escape
+from urllib.parse import urlparse, urlunparse
 
 # Third-party imports
 import requests
@@ -13,7 +15,7 @@ from werkzeug.serving import get_interface_ip
 from werkzeug.wrappers.response import Response as WerkzeugResponse
 
 # First-party imports
-from utils import css_utils, js_utils, render_utils, site_overrides
+from utils import cookie_utils, css_utils, js_utils, render_utils, site_overrides
 from utils.html_utils import transcode_html, transcode_content
 from utils.image_utils import is_image_url, fetch_and_cache_image, CACHE_DIR
 from utils.system_utils import load_preset
@@ -21,7 +23,7 @@ from utils.system_utils import load_preset
 
 os.environ['FLASK_ENV'] = 'development'
 app = Flask(__name__)
-session = requests.Session()
+# Each client gets its own server-side cookie jar (see utils/cookie_utils.py); there is no global session
 
 HTTP_ERRORS = (403, 404, 500, 503, 504)
 ERROR_HEADER = "[[Macproxy Encountered an Error]]"
@@ -45,6 +47,9 @@ config = load_preset()
 
 # Now get the settings we need after preset has potentially modified them
 ENABLED_EXTENSIONS = config.ENABLED_EXTENSIONS
+
+# Per-client cookie jars, shared by the proxy's own requests and the headless browser
+cookie_store = cookie_utils.store_from_config(config)
 
 # Start headless Chromium in the background if JavaScript rendering is on, so the first page is not slow
 render_utils.warm_up(config)
@@ -249,6 +254,11 @@ def process_response(response, url):
 
 	# Check if content type is in the list of non-transcode types
 	should_transcode = not any(content_type.startswith(t) for t in non_transcode_types)
+	# Only HTML is run through the HTML transcoder: JSON, XML, feeds and the like would be wrapped in <html><body>
+	# tags and corrupted (application/xhtml+xml is still HTML)
+	if media_type in ('application/json', 'application/xml', 'text/xml', 'text/csv') or (
+			media_type.endswith(('+json', '+xml')) and media_type != 'application/xhtml+xml'):
+		should_transcode = False
 
 	if should_transcode:
 		print("Transcoding content")
@@ -270,7 +280,8 @@ def process_response(response, url):
 
 	response = Response(content, status_code)
 	for key, value in headers.items():
-		if key.lower() not in ["content-encoding", "content-length", "transfer-encoding"]:
+		# Cookies stay on the server (cookie_store); the browser never sees them
+		if key.lower() not in ["content-encoding", "content-length", "transfer-encoding", "set-cookie"]:
 			response.headers[key] = value
 
 	print("Finished processing response")
@@ -301,9 +312,26 @@ def handle_default_request():
 		print(f"Error in handle_default_request: {str(e)}")
 		return abort(500, ERROR_HEADER + str(e))
 
+def current_client():
+	"""Identifies the cookie jar (and rendered-page cache) of the client making this request."""
+	return cookie_utils.client_key(request.remote_addr, config)
+
+def basic_auth_credentials():
+	"""(username, password) from an HTTP Basic Authorization header, or None."""
+	header = request.headers.get("Authorization", "")
+	if header.lower().startswith("basic "):
+		try:
+			user, _, password = base64.b64decode(header[6:].strip()).decode("utf-8", "replace").partition(":")
+			return user, password
+		except Exception:
+			return None
+	return None
+
 def render_if_needed(resp, content, headers):
 	"""With RENDER_JAVASCRIPT on, replace an HTML page by its DOM after the page's scripts have run on the server."""
-	if request.method != "GET" or resp.status_code >= 400:
+	# Only a page fetched with GET can be rendered. Check the request that produced the final response: after a login
+	# POST that redirects to a dashboard it is a GET, while the result of a plain POST has no URL to load again.
+	if resp.status_code >= 400 or getattr(resp.request, 'method', 'GET') != "GET":
 		return content, headers
 	media_type = next((v for k, v in headers.items() if k.lower() == 'content-type'), '').split(';')[0].strip().lower()
 	if media_type not in ('text/html', 'application/xhtml+xml'):
@@ -312,7 +340,12 @@ def render_if_needed(resp, content, headers):
 	target = resp.url or request.url
 	if not render_utils.should_render(target, config):
 		return content, headers
-	html = render_utils.render_page(target, config, request.headers.get("Accept-Language"))
+	client = current_client()
+	# A page produced by a form the client just submitted is shown first (once)
+	html = render_utils.handoff_pop(client, target)
+	if not html:
+		html = render_utils.render_page(target, config, request.headers.get("Accept-Language"),
+										client=client, store=cookie_store, auth=basic_auth_credentials())
 	if not html:
 		return content, headers  # rendering failed: fall back to the page as the site sent it
 	headers = {k: v for k, v in headers.items() if k.lower() not in ('content-type', 'content-length', 'content-encoding')}
@@ -326,14 +359,61 @@ def prepare_headers():
 		"Referer": request.headers.get("Referer"),
 		"User-Agent": USER_AGENT,
 	}
+	# HTTP Basic/Digest credentials from the browser's own login prompt
+	if request.headers.get("Authorization"):
+		headers["Authorization"] = request.headers["Authorization"]
 	return headers
+
+REQUEST_TIMEOUT = (10, 60)  # connect, read (seconds)
+
+def with_scheme(url, scheme):
+	parts = urlparse(url)
+	return urlunparse(parts._replace(scheme=scheme))
+
+def request_body():
+	"""The POST body as keyword arguments for requests: form fields (all values of each), uploaded files, or raw data."""
+	if request.files:
+		files = {name: (f.filename, f.stream.read(), f.mimetype) for name, f in request.files.items()}
+		return {"data": request.form.to_dict(flat=False), "files": files}
+	if request.form:
+		return {"data": request.form.to_dict(flat=False)}
+	raw = request.get_data()
+	return {"data": raw} if raw else {}
+
+def send_post(sess, url, headers):
+	"""POST to the site over https first, so passwords never travel upstream unencrypted, falling back to http.
+
+	Sites usually answer http:// with a 301 to https://, and a redirected POST is turned into a GET, which would
+	silently drop a login. Posting to https:// directly avoids that."""
+	targets = [with_scheme(url, "https"), url] if url.startswith("http://") else [url]
+	body = request_body()
+	last_error = None
+	for target in targets:
+		parts = urlparse(target)
+		h = dict(headers)
+		h["Origin"] = f"{parts.scheme}://{parts.netloc}"  # many sites reject a POST whose Origin/Referer is not theirs
+		if h.get("Referer"):
+			h["Referer"] = with_scheme(h["Referer"], parts.scheme)
+		if request.content_type and "data" in body and isinstance(body["data"], bytes):
+			h["Content-Type"] = request.content_type
+		try:
+			return sess.post(target, headers=h, allow_redirects=True, timeout=REQUEST_TIMEOUT, **body)
+		except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+			last_error = e
+	raise last_error
 
 def send_request(url, headers):
 	print(f"Sending request to: {url}")
+	sess = cookie_store.session(current_client())
 	if request.method == "POST":
-		return session.post(url, data=request.form, headers=headers, allow_redirects=True)
-	else:
-		return session.get(url, params=request.args, headers=headers)
+		return send_post(sess, url, headers)
+	if headers.get("Authorization") and url.startswith("http://"):
+		# Never send credentials over plain http if the site speaks https
+		try:
+			return sess.get(with_scheme(url, "https"), headers=headers, timeout=REQUEST_TIMEOUT)
+		except (requests.exceptions.SSLError, requests.exceptions.ConnectionError):
+			pass
+	return sess.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
 
 @app.after_request
 def apply_caching(resp):
@@ -342,6 +422,72 @@ def apply_caching(resp):
 	except:
 		pass
 	return resp
+
+@app.after_request
+def save_cookies(resp):
+	# Writes the cookie jars to COOKIE_JAR_FILE when that is configured and something changed
+	cookie_store.save()
+	return resp
+
+@app.route("/__mp/form", methods=["POST"])
+def handle_form_replay():
+	"""Submit a form that the page's own scripts would have handled, by replaying it in the headless browser."""
+	form = request.form
+	page_url = form.get("__mp_url", "")
+	if not render_utils.enabled(config) or not page_url:
+		return abort(400, "Form replay is not available")
+	# Only replay forms of the site the request is addressed to
+	if urlparse(page_url).netloc.split(":")[0].lower() != request.host.split(":")[0].lower():
+		return abort(400, "Form does not belong to this site")
+	try:
+		index = int(form.get("__mp_form", "0"))
+	except ValueError:
+		index = 0
+	fields = [(name, value) for name, value in form.items(multi=True) if not name.startswith("__mp_")]
+	result = render_utils.submit_form(page_url, index, fields, config,
+									  accept_language=request.headers.get("Accept-Language"),
+									  client=current_client(), store=cookie_store, auth=basic_auth_credentials())
+	if not result:
+		return abort(502, "The form could not be submitted")
+	final_url, html = result
+	render_utils.handoff_put(current_client(), final_url, html)
+	# Show the result at its own address (so reloading and relative links behave), without a fragment
+	location = with_scheme(final_url.split("#")[0], "http")
+	return Response(status=303, headers={"Location": location})
+
+def _cookie_page(message=""):
+	rows = []
+	by_domain = {}
+	for cookie in cookie_store.jar(current_client()):
+		by_domain.setdefault(cookie.domain.lstrip("."), []).append(cookie.name)
+	for domain in sorted(by_domain):
+		names = ", ".join(sorted(set(by_domain[domain])))
+		rows.append(f"<tr><td>{escape(domain)}</td><td>{len(by_domain[domain])}</td><td>{escape(names)}</td>"
+					f"<td><form method=\"post\" action=\"/__mp/cookies/clear\"><input type=\"hidden\" name=\"domain\" value=\"{escape(domain, quote=True)}\">"
+					f"<input type=\"submit\" value=\"Forget\"></form></td></tr>")
+	table = ("<table border=\"1\" cellpadding=\"4\"><tr><th>Site</th><th>Cookies</th><th>Names (values are never shown)</th><th></th></tr>"
+			 + "".join(rows) + "</table>") if rows else "<p>No cookies are stored for this device.</p>"
+	return (f"<html><head><title>Macproxy cookies</title></head><body><h1>Macproxy cookies</h1>{message}"
+			f"<p>Logins are kept on the proxy, not in your browser. Client: {escape(current_client())}</p>{table}"
+			"<form method=\"post\" action=\"/__mp/cookies/clear\"><input type=\"submit\" value=\"Forget everything\"></form></body></html>")
+
+@app.route("/__mp/cookies", methods=["GET"])
+def show_cookies():
+	return Response(_cookie_page(), mimetype="text/html")
+
+@app.route("/__mp/cookies/clear", methods=["POST"])
+def clear_cookies():
+	domain = request.form.get("domain", "").strip().lower().lstrip(".")
+	jar = cookie_store.jar(current_client())
+	if domain:
+		for cookie in list(jar):
+			if cookie.domain.lstrip(".").lower() == domain:
+				jar.clear(cookie.domain, cookie.path, cookie.name)
+		message = f"<p>Forgot the cookies for {escape(domain)}.</p>"
+	else:
+		cookie_store.clear(current_client())
+		message = "<p>Forgot all cookies for this device.</p>"
+	return Response(_cookie_page(message), mimetype="text/html")
 
 def get_proxy_hostname(hostname):
 	# Based on the `log_startup` function from werkzeug.serving.

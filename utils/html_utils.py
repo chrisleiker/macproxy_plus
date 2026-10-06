@@ -145,13 +145,20 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 		tag.replace_with(str(tag))
 
 	# Always convert HTTPS to HTTP regardless of whitelist status
-	for tag in soup(['link', 'script', 'img', 'a', 'iframe']):
+	for tag in soup(['link', 'script', 'img', 'a', 'iframe', 'form']):
 		# Handle src attributes
 		if 'src' in tag.attrs:
 			if tag['src'].startswith('https://'):
 				tag['src'] = tag['src'].replace('https://', 'http://')
 			elif tag['src'].startswith('//'):  # Handle protocol-relative URLs
 				tag['src'] = 'http:' + tag['src']
+
+		# Form actions (the browser would otherwise try to post straight to https://, which it cannot do through us)
+		if 'action' in tag.attrs and isinstance(tag['action'], str):
+			if tag['action'].startswith('https://'):
+				tag['action'] = tag['action'].replace('https://', 'http://', 1)
+			elif tag['action'].startswith('//'):
+				tag['action'] = 'http:' + tag['action']
 
 		# Handle href attributes
 		if 'href' in tag.attrs:

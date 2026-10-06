@@ -57,7 +57,7 @@ Browsers with no flexbox/grid support (Classilla) would otherwise stack every fl
 
 Spacing is compensated so edges and total height match the modern layout. Layouts that cannot be expressed (reversed directions, `order`, grid spans / named areas / explicit placement) fall back to plain stacking. Linked stylesheets are fetched and cached for 10 minutes, and emulation is skipped (the page is served unmodified) if it takes longer than a few seconds.
 
-The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils tests.test_layout_utils tests.test_site_overrides tests.test_image_scale tests.test_render_utils tests.test_html_utils_svg` (needs `tinycss2`, `beautifulsoup4`, `html5lib`, `Pillow`; the rendering and SVG tests are skipped unless Playwright / Flask / pillow-svg are installed, so the easiest way to run everything is inside the Docker image: `docker run --rm --entrypoint python3 macproxy_plus -m unittest discover -s tests -t .`).
+The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils tests.test_layout_utils tests.test_site_overrides tests.test_image_scale tests.test_render_utils tests.test_html_utils_svg tests.test_cookie_utils tests.test_login_cookies` (needs `tinycss2`, `beautifulsoup4`, `html5lib`, `Pillow`; the rendering and SVG tests are skipped unless Playwright / Flask / pillow-svg are installed, so the easiest way to run everything is inside the Docker image: `docker run --rm --entrypoint python3 macproxy_plus -m unittest discover -s tests -t .`).
 
 ### Scaling images by a percentage
 
@@ -84,9 +84,25 @@ RENDER_JAVASCRIPT_SKIP_DOMAINS = ["example.com"]   # optional: never render thes
 - Each page is rendered at the viewport size from your preset (`CSS_VIEWPORT_WIDTH` x `CSS_VIEWPORT_HEIGHT`), scrolled through once to trigger lazy-loaded content, and cached for `RENDER_CACHE_SECONDS` (default 300). A page that never stops loading is used as it stands after `RENDER_TIMEOUT` seconds (default 20).
 - Images, media and fonts are not downloaded while rendering (`RENDER_BLOCK_RESOURCES`); your browser fetches them through the proxy as usual.
 - It is best-effort: if rendering fails, the page is served exactly as the site sent it. Only `GET` pages are rendered; form posts and other requests are untouched.
-- It does not carry cookies or logins, and buttons that only work through JavaScript do nothing in the result (ordinary links and forms still work).
+- Cookies and logins are supported (see below). Buttons that only work through JavaScript, other than form submit buttons, still do nothing in the result; ordinary links and forms work.
 - Rendering takes a few seconds the first time and a few hundred MB of memory; `RENDER_MAX_CONCURRENT` (default 2) limits how many pages render at once. For Docker, `docker-compose.yml` sets `shm_size: "1gb"`; add the same to your TrueNAS app.
 - `theverge.com`'s "no JavaScript" rule (below) still means no script is *sent to your browser*; with rendering on, the site's scripts do run on the server first.
+
+### Logins and cookies
+
+Your browser never stores or sends a site's cookies. Instead macproxy keeps a **cookie jar on the server for each device** (identified by its IP address), used both for the proxy's own requests and by the headless browser, so a login made one way is seen by the other.
+
+- **Classic login forms** (a normal `<form method="post">`, like instapaper.com/user/login) just work: the form is posted to the site over `https://` first (so the password never goes upstream unencrypted), with a matching `Origin`, and the cookies it sets stay on the server. A login that redirects to a JavaScript-built page is rendered with those cookies.
+- **JavaScript-driven login forms** (no real `action`, handled by the page's scripts) need `RENDER_JAVASCRIPT = True`. The proxy points such a form back at itself; on submit it reloads the page in the headless browser, fills in the values you typed, presses the same button, waits for the page to react, and shows you the result (including error messages). Only forms on the site you are viewing can be replayed.
+- **HTTP Basic authentication** prompts work: the credentials your browser sends are forwarded (over `https://` when the site has it) and given to the renderer.
+- `http://<any-site>/__mp/cookies` shows which sites have cookies stored for your device (names only, never values) and lets you forget one site or everything.
+- Cookies are kept in memory by default, so a restart logs you out. To keep them, set `COOKIE_JAR_FILE` (the file is written with permissions 0600; mount a volume for it in Docker). `COOKIE_CLIENT_KEY = "global"` makes every device share one jar. `COOKIE_MAX_CLIENTS` and `COOKIE_MAX_PER_CLIENT` bound the memory used.
+
+```python
+COOKIE_JAR_FILE = "/app/data/cookies.json"   # optional: keep logins across restarts
+```
+
+Things to know: the leg between your browser and macproxy is plain `http://`, so a password you type crosses your network unencrypted. Use this only on a network you trust, and do not expose the proxy to the internet. Anyone who can reach the proxy from the same IP address shares that device's logins. Cookies are stored in plain text on the server (and in the `COOKIE_JAR_FILE`, if set). The form replay does not support file uploads or CAPTCHAs, and two-factor prompts that need a second page work only if they are ordinary forms.
 
 ### Per-site special cases
 

@@ -19,10 +19,18 @@ class UseTagTests(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
 		# html_utils reads its settings from a `config` module, which the bare image does not have
-		if "config" not in sys.modules:
+		cls.stubbed = "config" not in sys.modules
+		if cls.stubbed:
 			sys.modules["config"] = types.SimpleNamespace(
 				PRESET=None, CONVERT_IMAGES=False, CONVERT_IMAGES_TO_FILETYPE=None, RESIZE_IMAGES=False,
 				MAX_IMAGE_WIDTH=None, MAX_IMAGE_HEIGHT=None, DITHERING_ALGORITHM=None)
+
+	@classmethod
+	def tearDownClass(cls):
+		# Do not leak the stub (or the html_utils that captured it) into tests that need the real config
+		if cls.stubbed:
+			sys.modules.pop("config", None)
+			sys.modules.pop("utils.html_utils", None)
 
 	def transcode(self, html):
 		from flask import Flask

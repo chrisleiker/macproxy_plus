@@ -50,6 +50,16 @@ ENABLED_EXTENSIONS = [
 #RENDER_BLOCK_RESOURCES = ["image", "media", "font"] # not downloaded while rendering (the DOM does not need them)
 #RENDER_CACHE_SECONDS = 300
 
+# Logins and cookies. Cookies live on the proxy, one jar per device (IP address), shared by the proxy and the
+# headless browser; your browser never holds them. They are kept in memory unless you set a file.
+#COOKIE_JAR_FILE = "/app/data/cookies.json"   # keep logins across restarts (file mode 0600; mount a volume for it)
+#COOKIE_CLIENT_KEY = "ip"                      # "global" makes every device share one jar
+#COOKIE_MAX_CLIENTS = 50
+#COOKIE_MAX_PER_CLIENT = 600
+# With RENDER_JAVASCRIPT on, forms that a page's scripts handle are replayed in the headless browser so JavaScript
+# logins work. Set this to False to leave such forms alone.
+#RENDER_FORMS = True
+
 # While SIMPLIFY_HTML is True, you can use WHITELISTED_DOMAINS to disable post-processing for
 # specific sites (only perform HTTPS -> HTTP conversion and character conversion (if CONVERT_CHARACTERS is True),
 # without otherwise modifying the page's source code).
