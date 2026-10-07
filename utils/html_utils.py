@@ -11,7 +11,7 @@ from bs4.formatter import HTMLFormatter
 from flask import current_app, url_for
 
 # First-party imports
-from utils import adblock, aspect_utils, css_utils, image_scale, js_utils, layout_utils, site_overrides, svg_utils
+from utils import ad_slots, adblock, aspect_utils, css_utils, image_scale, js_utils, layout_utils, site_overrides, svg_utils
 from utils.image_utils import fetch_and_cache_image
 from utils.system_utils import load_preset
 
@@ -223,6 +223,14 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 			for attr in attributes_to_strip:
 				if attr in tag.attrs:
 					del tag[attr]
+
+	# Empty advertisement slots still reserve their space (a blank band across the page). Only when the page's scripts
+	# are not going to run in the browser: otherwise the slot may be about to be filled.
+	if (getattr(config, 'COLLAPSE_AD_SLOTS', True) and simplify_html and not is_whitelisted
+			and 'script' in (tags_to_strip or [])):
+		collapsed = ad_slots.collapse(soup)
+		if collapsed:
+			print(f"Ad slots: removed {collapsed} empty advertisement boxes from {(url or '')[:80]}")
 
 	# Translate CSS for older browsers (only when a preset/config opts in via CSS_MODE = "downlevel").
 	# Sites on WHITELISTED_DOMAINS are left untouched here, like the other post-processing.

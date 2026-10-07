@@ -8,7 +8,8 @@ from urllib.parse import urljoin
 # Third-party imports
 import soupsieve
 import tinycss2
-from bs4 import Tag
+from bs4 import NavigableString, Tag
+from bs4.element import CData, Comment, Declaration, Doctype, ProcessingInstruction
 from tinycss2 import ast as A
 
 # First-party imports
@@ -770,6 +771,39 @@ VALIGN = {"center": "middle", "flex-end": "bottom", "end": "bottom", "self-end":
 		  "flex-start": "top", "start": "top", "self-start": "top", "stretch": "top", "normal": "top"}
 
 
+CONTROL_TAGS = {"button", "summary"}  # elements browsers will not turn into a table: their layout goes in an inner box
+_NOT_TEXT = (Comment, Doctype, Declaration, ProcessingInstruction, CData)
+
+
+def wrap_text_runs(soup, el):
+	"""In a flex row, text sitting directly in the container is an anonymous flex item of its own (the "Classic" in
+	<button><svg/> Classic</button>). As a bare text node it would not take part in the table-cell alignment of its
+	siblings, so give each run of text a <span> to be that item. Returns how many were made."""
+	if not any(isinstance(c, Tag) and c.name not in SKIP_TAGS for c in el.children):
+		return 0  # only text: one anonymous item, nothing to align it with
+	made, run = 0, []
+
+	def flush():
+		nonlocal made
+		if run and any(str(t).strip() for t in run):
+			span = soup.new_tag("span")
+			run[0].insert_before(span)
+			for t in run:
+				span.append(t.extract())
+			made += 1
+		run.clear()
+
+	for child in list(el.children):
+		if isinstance(child, NavigableString) and not isinstance(child, _NOT_TEXT):
+			run.append(child)
+		elif isinstance(child, _NOT_TEXT):
+			continue
+		else:
+			flush()
+	flush()
+	return made
+
+
 def _in_flow_children(el, props_of):
 	kids = []
 	for c in el.children:
@@ -1007,6 +1041,8 @@ def emulate_layout(soup, page_url, settings, site_vars=None):
 
 		for el, kind, inline in containers:
 			props = props_of(el)
+			if kind == "flex" and (props.get("flex-direction") or "row") == "row":
+				wrap_text_runs(soup, el)
 			kids = _in_flow_children(el, props_of)
 			if not kids:
 				plan.container(el, [("display", "inline-block" if inline else "block")])
@@ -1050,6 +1086,16 @@ def emulate_layout(soup, page_url, settings, site_vars=None):
 				elif align == "center":
 					pairs += [("margin-left", "auto"), ("margin-right", "auto")]
 			_add_style(inner, pairs)
+		elif tag.name in CONTROL_TAGS and dict(pairs).get("display") in ("table", "inline-table"):
+			# A <button> will not become a table, so the row layout goes in a box inside it
+			inner = soup.new_tag("span")
+			for child in list(tag.contents):
+				inner.append(child.extract())
+			tag.append(inner)
+			target[key] = inner
+			_add_style(inner, [(k, "table" if v == "inline-table" else v) for k, v in pairs
+							   if k in ("display", "border-spacing", "box-sizing", "-moz-box-sizing")])
+			_add_style(tag, [("display", "inline-block" if dict(pairs)["display"] == "inline-table" else "block")])
 		else:
 			target[key] = tag
 			_add_style(tag, pairs)

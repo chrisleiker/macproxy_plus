@@ -74,6 +74,10 @@ ENABLED_EXTENSIONS = [
 # logins work. Set this to False to leave such forms alone.
 #RENDER_FORMS = True
 
+# Remove empty advertisement boxes (named ad/ads/advert/..., with nothing inside) so their reserved height does not
+# leave a blank band across the page. Only done when the preset strips scripts.
+#COLLAPSE_AD_SLOTS = True
+
 # For browsers without CSS `aspect-ratio` (the Classilla and PowerFox presets): give picture boxes that rely on it
 # (Tailwind's aspect-video, aspect-square, ...) a height, so the pictures in them do not vanish or stretch.
 #ASPECT_RATIO_EMULATION = True

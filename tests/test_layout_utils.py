@@ -167,6 +167,60 @@ class SpacingCompensationTests(unittest.TestCase):
 		self.assertNotIn("width", st)
 
 
+class TextItemTests(unittest.TestCase):
+	"""Text directly inside a flex row is an anonymous flex item, so it must line up like the elements next to it."""
+
+	def test_text_beside_an_element_becomes_an_item(self):
+		s = run(".r{display:flex;align-items:center;gap:4px}", '<div class="r" id="r"><i id="icon">*</i> Classic</div>')
+		row = s.select_one("#r")
+		spans = [c for c in row.children if getattr(c, "name", None) == "span"]
+		self.assertEqual(len(spans), 1)
+		self.assertEqual(spans[0].get_text(strip=True), "Classic")
+		st = style_of(spans[0])
+		self.assertEqual((st["display"], st["vertical-align"]), ("table-cell", "middle"))
+		self.assertEqual(style_of(s.select_one("#icon"))["vertical-align"], "middle")
+
+	def test_text_before_and_after(self):
+		s = run(".r{display:flex}", '<div class="r" id="r">one <b>two</b> three</div>')
+		self.assertEqual([c.get_text(strip=True) for c in s.select_one("#r").find_all("span", recursive=False)], ["one", "three"])
+
+	def test_whitespace_between_elements_is_not_an_item(self):
+		s = run(".r{display:flex}", '<div class="r" id="r"><i>a</i>\n  <i>b</i></div>')
+		self.assertEqual(s.select_one("#r").find_all("span", recursive=False), [])
+
+	def test_a_container_with_only_text_is_left_alone(self):
+		s = run(".r{display:flex;justify-content:center}", '<div class="r" id="r">just text</div>')
+		self.assertEqual(s.select_one("#r").find_all("span"), [])
+
+	def test_columns_are_left_alone(self):
+		s = run(".r{display:flex;flex-direction:column}", '<div class="r" id="r"><i>a</i> text</div>')
+		self.assertEqual(s.select_one("#r").find_all("span"), [])
+
+	def test_comments_do_not_become_items(self):
+		s = run(".r{display:flex}", '<div class="r" id="r"><i>a</i><!-- note --><i>b</i></div>')
+		self.assertEqual(s.select_one("#r").find_all("span"), [])
+
+
+class ButtonContainerTests(unittest.TestCase):
+	def test_a_button_gets_an_inner_box_for_its_row_layout(self):
+		s = run(".b{display:inline-flex;align-items:center;gap:6px}", '<button class="b" id="b"><i>x</i> Label</button>')
+		button = s.select_one("#b")
+		self.assertEqual(style_of(button)["display"], "inline-block")
+		inner = button.find("span", recursive=False)
+		self.assertEqual(style_of(inner)["display"], "table")
+		self.assertEqual(style_of(inner)["border-spacing"], "6px 0")
+		self.assertIsNotNone(inner.find("i"))
+		self.assertNotIn("width", style_of(inner))  # a button shrink-wraps its content
+
+	def test_a_block_level_flex_button(self):
+		s = run(".b{display:flex}", '<button class="b" id="b"><i>x</i><i>y</i></button>')
+		self.assertEqual(style_of(s.select_one("#b"))["display"], "block")
+
+	def test_other_elements_are_still_tables_themselves(self):
+		s = run(".b{display:flex}", '<a class="b" id="b" href="/x"><i>x</i><i>y</i></a>')
+		self.assertEqual(style_of(s.select_one("#b"))["display"], "table")
+
+
 class FlexWrapColumnTests(unittest.TestCase):
 	def test_wrap_floats_and_clears(self):
 		s = run(".w{display:flex;flex-wrap:wrap;gap:8px}", '<div class="w"><i>a</i><i>b</i></div>')
