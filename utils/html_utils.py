@@ -11,7 +11,7 @@ from bs4.formatter import HTMLFormatter
 from flask import current_app, url_for
 
 # First-party imports
-from utils import adblock, css_utils, image_scale, js_utils, layout_utils, site_overrides, svg_utils
+from utils import adblock, aspect_utils, css_utils, image_scale, js_utils, layout_utils, site_overrides, svg_utils
 from utils.image_utils import fetch_and_cache_image
 from utils.system_utils import load_preset
 
@@ -64,7 +64,7 @@ def transcode_content(content):
 	
 	return content.encode('utf-8')
 
-def downlevel_page_css(soup, url):
+def downlevel_page_css(soup, url, page_style=None):
 	"""Rewrite <style> blocks, style="" attributes and <link> tags for browsers with limited CSS support."""
 	settings = css_utils.settings_from_config(config)
 	site_vars = css_utils.get_site_vars(url)
@@ -117,6 +117,15 @@ def downlevel_page_css(soup, url):
 		elif not any(r in ('icon', 'shortcut') for r in rel):
 			# preload, prefetch, modulepreload, manifest, etc. are useless to an old browser
 			tag.decompose()
+
+	# Boxes that get their height from `aspect-ratio` collapse in a browser without it; give them one the old way
+	if page_style is not None and aspect_utils.enabled(config):
+		try:
+			count = aspect_utils.emulate(soup, page_style, settings)
+			if count:
+				print(f"Aspect ratio: gave {count} boxes a height on {url[:80]}")
+		except Exception as e:
+			print(f"Aspect-ratio emulation failed ({type(e).__name__}: {e})")
 
 
 def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False, 
@@ -173,14 +182,18 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 
 	# Inline SVGs are drawn as pictures later on, and need the page's CSS to know their size and colour. Work that out now,
 	# while the <style> and <link> tags are still in the page (the preset may strip them below).
-	svg_style = None
-	if getattr(config, 'SVG_STYLES', True) and url and soup.find('svg'):
+	svg_style = page_style = None
+	wants_svg = bool(getattr(config, 'SVG_STYLES', True) and url and soup.find('svg'))
+	wants_aspect = bool(url and aspect_utils.enabled(config))
+	if wants_svg or wants_aspect:
 		try:
-			svg_style = layout_utils.StyleCascade(soup, url, css_utils.settings_from_config(config), css_utils.get_site_vars(url))
-			svg_style.compute(svg_utils.elements_to_style(soup.find_all('svg')))
+			page_style = layout_utils.StyleCascade(soup, url, css_utils.settings_from_config(config), css_utils.get_site_vars(url))
+			if wants_svg:
+				page_style.compute(svg_utils.elements_to_style(soup.find_all('svg')))
+				svg_style = page_style
 		except Exception as e:
-			print(f"SVG styles unavailable ({type(e).__name__}: {e}); drawing SVGs on their own")
-			svg_style = None
+			print(f"Page styles unavailable ({type(e).__name__}: {e}); drawing SVGs on their own, no aspect-ratio boxes")
+			page_style = svg_style = None
 
 	# Remove ads and trackers: tags that load a blocked URL, and elements the filter lists' hiding rules match
 	ad_manager = adblock.get()
@@ -214,7 +227,7 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 	# Translate CSS for older browsers (only when a preset/config opts in via CSS_MODE = "downlevel").
 	# Sites on WHITELISTED_DOMAINS are left untouched here, like the other post-processing.
 	if getattr(config, 'CSS_MODE', 'strip') == 'downlevel' and not is_whitelisted:
-		downlevel_page_css(soup, url)
+		downlevel_page_css(soup, url, page_style)
 
 	# Always handle meta refresh tags
 	for tag in soup.find_all('meta', attrs={'http-equiv': 'refresh'}):

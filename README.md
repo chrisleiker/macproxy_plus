@@ -57,7 +57,17 @@ Browsers with no flexbox/grid support (Classilla) would otherwise stack every fl
 
 Spacing is compensated so edges and total height match the modern layout. Layouts that cannot be expressed (reversed directions, `order`, grid spans / named areas / explicit placement) fall back to plain stacking. Linked stylesheets are fetched and cached for 10 minutes, and emulation is skipped (the page is served unmodified) if it takes longer than a few seconds.
 
-The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils tests.test_layout_utils tests.test_site_overrides tests.test_image_scale tests.test_render_utils tests.test_html_utils_svg tests.test_cookie_utils tests.test_login_cookies tests.test_adblock tests.test_adblock_proxy tests.test_svg_utils` (needs `tinycss2`, `beautifulsoup4`, `html5lib`, `Pillow`; the rendering and SVG tests are skipped unless Playwright / Flask / pillow-svg are installed, so the easiest way to run everything is inside the Docker image: `docker run --rm --entrypoint python3 macproxy_plus -m unittest discover -s tests -t .`).
+The `CSS_UNSUPPORTED_*` lists in `presets/classilla/classilla.py` and `presets/powerfox/powerfox.py` are educated guesses; tune them against the real browser. Scripts are still stripped, and CSS translation is skipped for `WHITELISTED_DOMAINS`. To run the unit tests: `python -m unittest tests.test_css_utils tests.test_layout_utils tests.test_site_overrides tests.test_image_scale tests.test_render_utils tests.test_html_utils_svg tests.test_cookie_utils tests.test_login_cookies tests.test_adblock tests.test_adblock_proxy tests.test_svg_utils tests.test_aspect_utils` (needs `tinycss2`, `beautifulsoup4`, `html5lib`, `Pillow`; the rendering and SVG tests are skipped unless Playwright / Flask / pillow-svg are installed, so the easiest way to run everything is inside the Docker image: `docker run --rm --entrypoint python3 macproxy_plus -m unittest discover -s tests -t .`).
+
+### Picture boxes that use `aspect-ratio`
+
+Many sites make a 16:9 or square picture box with CSS `aspect-ratio` (Tailwind's `aspect-video`, `aspect-square`, `aspect-[4/3]`) around absolutely positioned images. A browser without that property gives such a box no height, so the pictures vanish or, sized to "100%", stretch across the whole page. For presets whose browser lacks it (Classilla, PowerFox), the proxy gives these boxes a height the old way, with percentage padding (`height:0; padding-bottom:56.25%`, which is exact at any width):
+
+- a box whose contents are all out of flow (or empty) gets the padding itself (inside it, when the box is a table cell made by the layout emulation);
+- `<iframe>`, `<video>`, `<canvas>`, `<embed>` and `<object>` with no height of their own are wrapped in such a box;
+- boxes with normal content (text, an ordinary image) or a height of their own are left alone, since their content already gives them a height.
+
+`ASPECT_RATIO_EMULATION = False` turns it off.
 
 ### Inline SVG icons and logos
 

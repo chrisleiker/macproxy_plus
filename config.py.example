@@ -74,6 +74,10 @@ ENABLED_EXTENSIONS = [
 # logins work. Set this to False to leave such forms alone.
 #RENDER_FORMS = True
 
+# For browsers without CSS `aspect-ratio` (the Classilla and PowerFox presets): give picture boxes that rely on it
+# (Tailwind's aspect-video, aspect-square, ...) a height, so the pictures in them do not vanish or stretch.
+#ASPECT_RATIO_EMULATION = True
+
 # Inline SVGs are drawn as pictures sized and coloured the way the page's CSS makes them (hidden ones are dropped).
 # Set to False to draw each SVG on its own, at its internal size, in black.
 #SVG_STYLES = True

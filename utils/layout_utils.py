@@ -56,7 +56,8 @@ SVG_PROPS = {
 	"height", "min-width", "min-height", "max-height", "stroke-linecap", "stroke-linejoin", "fill-rule", "clip-rule",
 	"stroke-dasharray", "stroke-miterlimit",
 }
-ACCEPTED = TRACKED | SVG_PROPS
+ASPECT_PROPS = {"aspect-ratio"}  # read by utils/aspect_utils.py
+ACCEPTED = TRACKED | SVG_PROPS | ASPECT_PROPS
 # Values that are case-sensitive (they hold ids or grid line names), so they are kept as written
 CASE_SENSITIVE = {"grid-template-columns", "grid-template-areas", "fill", "stroke"}
 
@@ -516,6 +517,24 @@ class StyleCascade:
 					parsed = {}
 			self._inline[id(el)] = parsed
 		return self._inline[id(el)]
+
+	def elements_with(self, prop, soup):
+		"""Elements that some rule, or their own style attribute, gives this property (before any cascade is computed)."""
+		found = {}
+		index = DocIndex(soup.find_all(True))
+		for rule in self.rules:
+			if prop not in rule.decls:
+				continue
+			for el in index.candidates(rule.selector):
+				try:
+					if soupsieve.match(rule.selector, el):
+						found[id(el)] = el
+				except Exception:
+					break
+		for el in soup.find_all(style=True):
+			if prop in (el.get("style") or "").lower():
+				found[id(el)] = el
+		return list(found.values())
 
 	def compute(self, elements, budget=4.0):
 		"""Work out the cascade for these elements (add their ancestors if you need inherited values)."""
