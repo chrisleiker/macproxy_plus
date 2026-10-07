@@ -11,7 +11,7 @@ from bs4.formatter import HTMLFormatter
 from flask import current_app, url_for
 
 # First-party imports
-from utils import adblock, css_utils, image_scale, js_utils, layout_utils, site_overrides
+from utils import adblock, css_utils, image_scale, js_utils, layout_utils, site_overrides, svg_utils
 from utils.image_utils import fetch_and_cache_image
 from utils.system_utils import load_preset
 
@@ -171,6 +171,17 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 			elif tag['href'].startswith('//'):  # Handle protocol-relative URLs
 				tag['href'] = 'http:' + tag['href']
 
+	# Inline SVGs are drawn as pictures later on, and need the page's CSS to know their size and colour. Work that out now,
+	# while the <style> and <link> tags are still in the page (the preset may strip them below).
+	svg_style = None
+	if getattr(config, 'SVG_STYLES', True) and url and soup.find('svg'):
+		try:
+			svg_style = layout_utils.StyleCascade(soup, url, css_utils.settings_from_config(config), css_utils.get_site_vars(url))
+			svg_style.compute(svg_utils.elements_to_style(soup.find_all('svg')))
+		except Exception as e:
+			print(f"SVG styles unavailable ({type(e).__name__}: {e}); drawing SVGs on their own")
+			svg_style = None
+
 	# Remove ads and trackers: tags that load a blocked URL, and elements the filter lists' hiding rules match
 	ad_manager = adblock.get()
 	if ad_manager is not None and ad_manager.enabled and url:
@@ -247,23 +258,40 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 	# Fetch, cache, and convert them - then replace the inline <svg> tag with
 	# an <img> tag whose src attribute points to this proxy _itself_.
 	for tag in soup.find_all(['svg']):
+		if tag.decomposed:
+			continue
+		prepared = None
+		if svg_style is not None:
+			try:
+				prepared = svg_utils.prepare(tag, svg_style)
+			except Exception as e:
+				print(f"Could not prepare an SVG ({type(e).__name__}: {e}); drawing it on its own")
+				prepared = False
+			if prepared is None:
+				tag.decompose()  # the page's CSS hides it (or it is only a sprite sheet)
+				continue
 
-		# Set height and width equal to the viewport if one is not specified
-		svg_attrs = tag.attrs
-		if "height" not in svg_attrs and "viewBox" in svg_attrs:
-			view_box = svg_attrs["viewBox"].split(" ")
-			tag["height"] = view_box[3]
-		if "width" not in svg_attrs and "viewBox" in svg_attrs:
-			view_box = svg_attrs["viewBox"].split(" ")
-			tag["width"] = view_box[2]
+		raster = None
+		if prepared:
+			markup, original = prepared.markup, prepared.attrs
+			width, height, raster = prepared.width, prepared.height, prepared.raster
+		else:
+			# No page CSS to go on: set height and width equal to the viewport if one is not specified
+			svg_attrs = tag.attrs
+			if "height" not in svg_attrs and "viewBox" in svg_attrs:
+				tag["height"] = svg_attrs["viewBox"].split(" ")[3]
+			if "width" not in svg_attrs and "viewBox" in svg_attrs:
+				tag["width"] = svg_attrs["viewBox"].split(" ")[2]
+			markup, original = str(tag), {k: tag.get(k) for k in ("class", "id", "style", "title", "aria-label")}
+			width, height = tag.get("width"), tag.get("height")
 
 		# Convert it to a gif (or other specified format)
-		fake_url = hashlib.md5(str(tag).encode()).hexdigest()
+		fake_url = hashlib.md5(markup.encode()).hexdigest()
 		convert = config.CONVERT_IMAGES
 		convert_to = config.CONVERT_IMAGES_TO_FILETYPE
 		cached = fetch_and_cache_image(
 			fake_url,
-			str(tag).encode('utf-8'),
+			markup.encode('utf-8'),
 			resize=config.RESIZE_IMAGES,
 			max_width=config.MAX_IMAGE_WIDTH,
 			max_height=config.MAX_IMAGE_HEIGHT,
@@ -272,6 +300,9 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 			dithering=config.DITHERING_ALGORITHM,
 			hash_url=False,
 			scale_percent=getattr(config, 'IMAGE_SCALE_PERCENT', None),
+			keep_alpha=True,
+			always_process=True,
+			svg_size=raster,
 		)
 		# The cache names the file after its real format, so use the name it returned
 		cached_name = os.path.basename(cached) if cached else f"{fake_url}.gif"
@@ -280,12 +311,22 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 		# always return `localhost` instead of our host IP / port. So grab that
 		# info from the app config directly and prepend it to a relative URL instead.
 		relative_url = url_for('serve_cached_image', filename=cached_name)
-		url = f"http://{current_app.config['MACPROXY_HOST_AND_PORT']}{relative_url}"
-		img_attrs = {"src": url}
-		if "height" in svg_attrs:
-			img_attrs["height"] = svg_attrs["height"]
-		if "width" in svg_attrs:
-			img_attrs["width"] = svg_attrs["width"]
+		img_url = f"http://{current_app.config['MACPROXY_HOST_AND_PORT']}{relative_url}"
+		img_attrs = {"src": img_url}
+		if height is not None:
+			img_attrs["height"] = str(height)
+		if width is not None:
+			img_attrs["width"] = str(width)
+		# Carry over what the page's CSS needs to keep placing and sizing it
+		classes = original.get("class") or []
+		classes = classes.split() if isinstance(classes, str) else list(classes)
+		img_attrs["class"] = " ".join(classes + ["mp-svg"])
+		if original.get("id"):
+			img_attrs["id"] = original["id"]
+		if original.get("style"):
+			img_attrs["style"] = original["style"]
+		label = original.get("aria-label") or original.get("title")
+		img_attrs["alt"] = label if isinstance(label, str) else ""
 		img = soup.new_tag("img", **img_attrs)
 		tag.replace_with(img)
 

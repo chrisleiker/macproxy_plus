@@ -741,9 +741,32 @@ def _clean_selector(sel, ctx):
 	return sel if ctx.settings.selector_ok(sel) else None
 
 
+_SVG_SUBJECT = re.compile(r"(^|[\s>+~])svg((?:[.#:\[][^\s>+~]*)?)$", re.I)
+
+
+def _with_svg_twin(selectors):
+	"""Inline SVGs become <img class="mp-svg"> pictures (see utils/html_utils.py), so a rule that styles `svg` itself
+	(`svg`, `.btn svg`, `svg.icon`) must also apply to those pictures. Rules about the inside of an SVG (`svg path`) are
+	left alone: the inside has already been drawn."""
+	out = list(selectors)
+	for sel in selectors:
+		m = _SVG_SUBJECT.search(sel)
+		if m:
+			twin = sel[:m.start()] + m.group(1) + "img.mp-svg" + m.group(2)
+			if twin not in out:
+				out.append(twin)
+	return out
+
+
 def _process_block(selectors, content, ctx, depth):
 	"""Process a style rule body. Returns a list of CSS rule strings (this rule + flattened nested rules)."""
 	items = tinycss2.parse_blocks_contents(content, skip_comments=True, skip_whitespace=True)
+	# Custom properties declared in this very rule are visible to its other declarations: Tailwind writes
+	# `.text-white{--tw-text-opacity:1;color:rgb(255 255 255/var(--tw-text-opacity))}`, which would otherwise be dropped
+	local = {item.name: tinycss2.serialize(item.value).strip() for item in items
+			 if isinstance(item, A.Declaration) and item.name.startswith("--")}
+	if local and "var" in ctx.settings.unsupported_features:
+		ctx = _Ctx(ctx.settings, {**ctx.vars, **local}, ctx.base_url, ctx.fetch_cache)
 	decls, nested = [], []
 	for item in items:
 		if isinstance(item, A.Declaration):
@@ -752,7 +775,7 @@ def _process_block(selectors, content, ctx, depth):
 			nested.append(item)
 
 	out = []
-	kept = [s for s in (_clean_selector(sel, ctx) for sel in selectors) if s]
+	kept = _with_svg_twin([s for s in (_clean_selector(sel, ctx) for sel in selectors) if s])
 	if kept and decls:
 		out.append(f"{', '.join(kept)}{{{_emit_declarations(decls)}}}")
 

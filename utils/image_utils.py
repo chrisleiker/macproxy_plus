@@ -47,7 +47,7 @@ def is_image_url(url):
 	return mime_type and mime_type.startswith('image/')
 
 def optimize_image(image_data, resize=True, max_width=512, max_height=342, 
-				  convert=True, convert_to='gif', dithering='FLOYDSTEINBERG', scale_percent=None):
+				  convert=True, convert_to='gif', dithering='FLOYDSTEINBERG', scale_percent=None, keep_alpha=False, svg_size=None):
 	try:
 
 		# Try to open the image directly using PIL
@@ -64,13 +64,21 @@ def optimize_image(image_data, resize=True, max_width=512, max_height=342,
 				try:
 					fp.write(image_data)
 					fp.close()
-					img = SVG(fp.name).im(renderer=get_svg_renderer())
+					svg = SVG(fp.name)
+					# The renderer sizes an SVG from its viewBox; when we know the size it should be shown at, say so
+					img = svg.im(size=[tuple(svg_size)], renderer=get_svg_renderer()) if svg_size else svg.im(renderer=get_svg_renderer())
 				finally:
 					fp.close()
 					os.unlink(fp.name)
 
-		# Convert RGBA images to RGB with white background
-		if img.mode == 'RGBA':
+		# Convert RGBA images to RGB with white background, unless the caller wants transparency (an icon that is
+		# white on a transparent background must stay that way) and the output format can hold it
+		target = (convert_to or "png").lower() if convert else "png"
+		alpha_kept = keep_alpha and target in ("png", "webp")
+		if alpha_kept:
+			if img.mode != 'RGBA':
+				img = img.convert('RGBA')
+		elif img.mode == 'RGBA':
 			background = Image.new('RGB', img.size, (255, 255, 255))
 			background.paste(img, mask=img.split()[3])
 			img = background
@@ -118,7 +126,7 @@ def optimize_image(image_data, resize=True, max_width=512, max_height=342,
 
 def fetch_and_cache_image(url, content=None, resize=True, max_width=512, max_height=342,
 						 convert=True, convert_to='gif', dithering='FLOYDSTEINBERG',
-						 hash_url=True, scale_percent=None):
+						 hash_url=True, scale_percent=None, keep_alpha=False, always_process=False, svg_size=None):
 	try:
 		print(f"Processing image: {url}")
 
@@ -143,7 +151,7 @@ def fetch_and_cache_image(url, content=None, resize=True, max_width=512, max_hei
 				content = response.content
 
 			# Only process if image conversion, resizing or scaling is enabled
-			if convert or resize or normalize_percent(scale_percent):
+			if convert or resize or always_process or normalize_percent(scale_percent):
 				optimized_image = optimize_image(
 					content,
 					resize=resize,
@@ -152,7 +160,9 @@ def fetch_and_cache_image(url, content=None, resize=True, max_width=512, max_hei
 					convert=convert,
 					convert_to=convert_to,
 					dithering=dithering,
-					scale_percent=scale_percent
+					scale_percent=scale_percent,
+					keep_alpha=keep_alpha,
+					svg_size=svg_size
 				)
 			else:
 				optimized_image = content

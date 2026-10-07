@@ -238,3 +238,33 @@ class RobustnessTests(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class SvgSelectorTwinTests(unittest.TestCase):
+	"""Inline SVGs are turned into <img class="mp-svg">, so rules that style `svg` must reach those pictures too."""
+
+	def css(self, source):
+		return C.downlevel_css(source, OLD)
+
+	def test_type_selector_gets_a_twin(self):
+		self.assertEqual(self.css("svg{display:block}"), "svg, img.mp-svg{display:block}")
+
+	def test_descendant_and_compound_subjects(self):
+		self.assertEqual(self.css(".btn svg{margin:0}"), ".btn svg, .btn img.mp-svg{margin:0}")
+		self.assertEqual(self.css("a>svg.icon{height:5px}"), "a>svg.icon, a>img.mp-svg.icon{height:5px}")
+		self.assertEqual(self.css("svg#logo{width:9px}"), "svg#logo, img.mp-svg#logo{width:9px}")
+
+	def test_selector_lists_and_media(self):
+		self.assertEqual(self.css("h1, svg{margin:0}"), "h1, svg, img.mp-svg{margin:0}")
+		self.assertEqual(self.css("@media (min-width:600px){.nav svg{height:20px}}"), ".nav svg, .nav img.mp-svg{height:20px}")
+
+	def test_rules_about_the_inside_of_an_svg_are_left_alone(self):
+		for css in ("svg path{fill:red}", "svg>g{fill:red}", ".a svg *{stroke:red}"):
+			self.assertEqual(self.css(css), css)
+
+	def test_other_selectors_are_unchanged(self):
+		for css in (".svg{color:red}", "svgx{color:red}", "a.svg-icon{color:red}", "#svg{color:red}"):
+			self.assertEqual(self.css(css), css)
+
+	def test_nested_rules_get_twins_too(self):
+		self.assertIn(".card img.mp-svg", self.css(".card{svg{width:10px}}"))

@@ -74,6 +74,10 @@ ENABLED_EXTENSIONS = [
 # logins work. Set this to False to leave such forms alone.
 #RENDER_FORMS = True
 
+# Inline SVGs are drawn as pictures sized and coloured the way the page's CSS makes them (hidden ones are dropped).
+# Set to False to draw each SVG on its own, at its internal size, in black.
+#SVG_STYLES = True
+
 # While SIMPLIFY_HTML is True, you can use WHITELISTED_DOMAINS to disable post-processing for
 # specific sites (only perform HTTPS -> HTTP conversion and character conversion (if CONVERT_CHARACTERS is True),
 # without otherwise modifying the page's source code).

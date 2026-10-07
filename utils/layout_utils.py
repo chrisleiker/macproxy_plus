@@ -50,6 +50,16 @@ TRACKED = {
 	"margin-top", "margin-right", "margin-bottom", "margin-left",
 }
 
+# Properties read when working out how an inline SVG should look (see utils/svg_utils.py)
+SVG_PROPS = {
+	"fill", "stroke", "stroke-width", "stroke-opacity", "fill-opacity", "opacity", "color", "font-size", "visibility",
+	"height", "min-width", "min-height", "max-height", "stroke-linecap", "stroke-linejoin", "fill-rule", "clip-rule",
+	"stroke-dasharray", "stroke-miterlimit",
+}
+ACCEPTED = TRACKED | SVG_PROPS
+# Values that are case-sensitive (they hold ids or grid line names), so they are kept as written
+CASE_SENSITIVE = {"grid-template-columns", "grid-template-areas", "fill", "stroke"}
+
 _SHEET_CACHE = {}
 
 
@@ -229,8 +239,8 @@ def _expand(name, value):
 		return out
 	if name == "-webkit-box-flex":
 		return [("flex-grow", value)]
-	if name in TRACKED:
-		return [(name, low if name not in ("grid-template-columns", "grid-template-areas") else value)]
+	if name in ACCEPTED:
+		return [(name, value if name in CASE_SENSITIVE else low)]
 	return []
 
 
@@ -328,25 +338,102 @@ def _unescape(tok):
 	return re.sub(r"\\(.)", r"\1", tok)
 
 
+def _read_ident(text, i):
+	"""Read a CSS identifier starting at text[i], honouring backslash escapes (`md\\:flex` is the name `md:flex`).
+	Returns (name, next index, reliable); a hex escape such as `\\31 ` is not decoded, so it makes the result unreliable."""
+	out, n, reliable = [], len(text), True
+	while i < n:
+		ch = text[i]
+		if ch == "\\" and i + 1 < n:
+			nxt = text[i + 1]
+			if re.match(r"[0-9a-fA-F]", nxt):
+				reliable = False
+			out.append(nxt)
+			i += 2
+		elif ch.isalnum() or ch in "_-" or ord(ch) > 127:
+			out.append(ch)
+			i += 1
+		else:
+			break
+	return "".join(out), i, reliable
+
+
+def _skip_balanced(text, i, open_ch, close_ch):
+	"""text[i] is open_ch: return the index just past its matching close_ch (quotes and escapes respected)."""
+	depth, n = 0, len(text)
+	while i < n:
+		ch = text[i]
+		if ch == "\\":
+			i += 2
+			continue
+		if ch in "\"'":
+			quote = ch
+			i += 1
+			while i < n and text[i] != quote:
+				i += 2 if text[i] == "\\" else 1
+		elif ch == open_ch:
+			depth += 1
+		elif ch == close_ch:
+			depth -= 1
+			if depth == 0:
+				return i + 1
+		i += 1
+	return n
+
+
 def selector_tokens(selector):
-	"""(required classes, required ids, last-compound classes, last-compound ids, last-compound tag, reliable)."""
-	sel = _strip_selector(selector)
-	reliable = not re.search(r"\\[0-9a-fA-F]", sel)  # hex escapes are not unescaped; do not prune on them
+	"""(required classes, required ids, last-compound classes, last-compound ids, last-compound tag, reliable).
+
+	Arguments of :not()/:is()/:has() and attribute selectors are skipped (nothing in them is required)."""
 	classes, ids = set(), set()
-	for m in _TOKEN_RE.finditer(sel):
-		if m.group(1):
-			classes.add(_unescape(m.group(1)))
+	cur = {"classes": set(), "ids": set(), "tag": None, "used": False}
+	last = cur
+	reliable = True
+	i, n = 0, len(selector)
+	while i < n:
+		ch = selector[i]
+		if ch in " \t\r\n>+~,":
+			if cur["used"]:
+				last, cur = cur, {"classes": set(), "ids": set(), "tag": None, "used": False}
+			i += 1
+		elif ch == ".":
+			name, i, ok = _read_ident(selector, i + 1)
+			reliable &= ok
+			if name:
+				classes.add(name)
+				cur["classes"].add(name)
+				cur["used"] = True
+		elif ch == "#":
+			name, i, ok = _read_ident(selector, i + 1)
+			reliable &= ok
+			if name:
+				ids.add(name)
+				cur["ids"].add(name)
+				cur["used"] = True
+		elif ch == "[":
+			i = _skip_balanced(selector, i, "[", "]")
+			cur["used"] = True
+		elif ch == ":":
+			while i < n and selector[i] == ":":
+				i += 1
+			_, i, _ = _read_ident(selector, i)
+			if i < n and selector[i] == "(":
+				i = _skip_balanced(selector, i, "(", ")")
+			cur["used"] = True
+		elif ch == "*":
+			cur["used"] = True
+			i += 1
+		elif ch == "\\" or ch.isalpha() or ch == "_":
+			name, i, ok = _read_ident(selector, i)
+			reliable &= ok
+			if not cur["used"] and name:
+				cur["tag"] = name.lower()
+			cur["used"] = True
 		else:
-			ids.add(_unescape(m.group(2)))
-	last = re.split(r"[\s>+~]+", sel.strip())[-1] if sel.strip() else ""
-	lclasses, lids = set(), set()
-	for m in _TOKEN_RE.finditer(last):
-		if m.group(1):
-			lclasses.add(_unescape(m.group(1)))
-		else:
-			lids.add(_unescape(m.group(2)))
-	tm = re.match(r"[a-zA-Z][\w-]*", last)
-	return classes, ids, lclasses, lids, (tm.group(0).lower() if tm else None), reliable
+			i += 1
+	if cur["used"]:
+		last = cur
+	return classes, ids, last["classes"], last["ids"], last["tag"], reliable
 
 
 class DocIndex:
@@ -400,6 +487,48 @@ def cascade(index, rules, deadline):
 				if prop not in slot or key >= slot[prop][:3]:
 					slot[prop] = key + (value,)
 	return best, tags
+
+
+class StyleCascade:
+	"""The final value of chosen CSS properties for chosen elements, from the page's stylesheets and style="" attributes.
+
+	Build it while the page's <style> and <link> tags are still in the soup (it reads and fetches them), then ask
+	for the elements you care about. Media queries are evaluated at the preset's viewport size."""
+
+	def __init__(self, soup, page_url, settings, site_vars=None, wanted=None):
+		self.settings = settings
+		self.site_vars = site_vars if site_vars is not None else {}
+		self.wanted = set(wanted or ACCEPTED)  # by default every property we understand: width, display, fill, color, ...
+		self.resolver = _resolver_settings(settings)
+		self.rules = build_rules(gather_css(soup, page_url, settings), settings, self.site_vars)
+		self.best = {}
+		self._inline = {}
+		self._elements = {}  # strong references: keeps ids from being reused by other elements
+
+	def _inline_of(self, el):
+		if id(el) not in self._inline:
+			text = el.get("style")
+			parsed = {}
+			if text:
+				try:
+					parsed = parse_declarations(css_utils.downlevel_declarations(text, self.resolver, self.site_vars))
+				except Exception:
+					parsed = {}
+			self._inline[id(el)] = parsed
+		return self._inline[id(el)]
+
+	def compute(self, elements, budget=4.0):
+		"""Work out the cascade for these elements (add their ancestors if you need inherited values)."""
+		relevant = {id(e): e for e in elements}
+		rules = [r for r in self.rules if r.decls.keys() & self.wanted]
+		best, _ = cascade(DocIndex(relevant.values()), rules, time.time() + budget)
+		self._elements.update(relevant)
+		for key in relevant:
+			self.best[key] = best.get(key, {})
+
+	def props(self, el):
+		"""{property: value} for an element that was passed to compute()."""
+		return element_props(el, self.best, self._inline_of(el))
 
 
 def element_props(el, best, inline_props):
