@@ -22,7 +22,7 @@ Settings (config.py, all optional):
   RENDER_FORMS                   True (default) to route forms that a page's scripts handle (no real action) back
                                  through the renderer, so JavaScript-driven login forms work
 
-Cookies: the renderer shares the client's cookie jar (utils/cookie_utils.py) with the proxy. Cookies are loaded
+Cookies and form replay are off unless COOKIE_SUPPORT = True (see utils/cookie_utils.py). When on, the renderer shares the client's cookie jar (utils/cookie_utils.py) with the proxy. Cookies are loaded
 into the headless browser before a page loads and read back afterwards, so a login made by either one is seen
 by the other. Rendered pages are cached per client, never shared between clients.
 
@@ -275,7 +275,8 @@ async def _settle(page, started, timeout, scroll=True):
 
 
 def _forms_enabled(config):
-	return bool(_cfg(config, "RENDER_FORMS", True))
+	# Replaying a form is part of login support, so it is off along with cookies (COOKIE_SUPPORT)
+	return bool(_cfg(config, "RENDER_FORMS", True)) and bool(getattr(config, "COOKIE_SUPPORT", False))
 
 
 async def _render(url, config, accept_language, cookies, auth):

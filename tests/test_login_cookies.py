@@ -8,6 +8,7 @@ import socketserver
 import sys
 import threading
 import unittest
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -155,9 +156,11 @@ class LoginCookieTests(unittest.TestCase):
 		cls.server.daemon_threads = True
 		threading.Thread(target=cls.server.serve_forever, daemon=True).start()
 		cls.base = f"http://127.0.0.1:{cls.server.server_address[1]}"
-		cls.original = {k: getattr(proxy.config, k, None) for k in ("RENDER_JAVASCRIPT", "RENDER_TIMEOUT", "RENDER_CACHE_SECONDS", "RENDER_FORMS")}
+		names = ("RENDER_JAVASCRIPT", "RENDER_TIMEOUT", "RENDER_CACHE_SECONDS", "RENDER_FORMS", "COOKIE_SUPPORT")
+		cls.original = {k: getattr(proxy.config, k, None) for k in names}
 		proxy.config.RENDER_JAVASCRIPT = True
 		proxy.config.RENDER_TIMEOUT = 10
+		proxy.config.COOKIE_SUPPORT = True  # cookies and logins are off by default; these tests are about the feature itself
 
 	@classmethod
 	def tearDownClass(cls):
@@ -177,6 +180,19 @@ class LoginCookieTests(unittest.TestCase):
 
 	def req(self, method, path, client="10.0.0.1", **kw):
 		return getattr(self.http, method)(path, base_url=self.base, environ_overrides={"REMOTE_ADDR": client}, **kw)
+
+	def cookies_off(self):
+		"""Context manager: the default configuration, with cookie and login support switched off."""
+		import contextlib
+
+		@contextlib.contextmanager
+		def off():
+			self.proxy.config.COOKIE_SUPPORT = False
+			try:
+				yield
+			finally:
+				self.proxy.config.COOKIE_SUPPORT = True
+		return off()
 
 	def jar_names(self, client="10.0.0.1"):
 		return {c.name for c in self.proxy.cookie_store.jar(client)}
@@ -327,6 +343,52 @@ class LoginCookieTests(unittest.TestCase):
 		r = self.req("get", "/secret")
 		self.assertEqual(r.status_code, 401)
 		self.assertIn("Basic", r.headers.get("WWW-Authenticate", ""))
+
+	# -- switched off (the default) ---------------------------------------------------------
+
+	def test_off_logins_are_not_remembered(self):
+		with self.cookies_off():
+			r = self.login_classic()
+			self.assertIn(b"Welcome alice", r.data)  # cookies still work within one request, so the redirect after the POST works
+			self.assertEqual(self.jar_names(), set())  # but nothing is kept
+			self.assertEqual(self.req("get", "/home").status_code, 401)
+			self.assertEqual(json.loads(self.req("get", "/whoami").data), {})
+
+	def test_off_cookies_set_by_page_script_are_not_kept(self):
+		with self.cookies_off():
+			self.req("get", "/jscookie")
+			self.assertEqual(self.jar_names(), set())
+			self.assertEqual(json.loads(self.req("get", "/whoami").data), {})
+
+	def test_off_set_cookie_is_still_never_sent_to_the_browser(self):
+		with self.cookies_off():
+			self.assertIsNone(self.req("get", "/setcookie").headers.get("Set-Cookie"))
+
+	def test_off_script_forms_are_left_alone_and_replay_is_unavailable(self):
+		with self.cookies_off():
+			html = self.req("get", "/app").data.decode()
+			self.assertNotIn("/__mp/form", html)
+			self.assertNotIn("__mp_url", html)
+			self.assertEqual(self.req("post", "/__mp/form", data={"__mp_url": self.base + "/app", "__mp_form": "0"}).status_code, 404)
+
+	def test_off_cookie_pages_are_unavailable(self):
+		with self.cookies_off():
+			self.assertEqual(self.req("get", "/__mp/cookies").status_code, 404)
+			self.assertEqual(self.req("post", "/__mp/cookies/clear", data={}).status_code, 404)
+
+	def test_off_the_other_fixes_still_apply(self):
+		with self.cookies_off():
+			self.assertEqual(self.req("get", "/echoquery?a=1&b=2").data, b"a=1&b=2")
+			self.assertEqual(sorted(self.req("post", "/formecho", data={"tag": ["a", "b"]}).data.decode().split("&")), ["tag=a", "tag=b"])
+			self.assertEqual(json.loads(self.req("get", "/whoami").data), {})  # JSON is not wrapped in <html>
+
+	def test_off_basic_auth_still_works(self):
+		with self.cookies_off():
+			auth = {"Authorization": "Basic " + base64.b64encode(b"bob:pw").decode()}
+			self.assertIn(b"secret page", self.req("get", "/secret", headers=auth).data)
+
+	def test_off_by_default(self):
+		self.assertFalse(self.proxy.cookie_utils.enabled(SimpleNamespace()))
 
 	# -- cookie management page --------------------------------------------------------
 

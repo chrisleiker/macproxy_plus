@@ -328,7 +328,7 @@ class FastSelectorTests(unittest.TestCase):
 		'[data-x="hello"]', '[data-x="Hello-World"]', '[data-x="HELLO" i]', '[data-x^="hello"]', '[data-x$="world"]', '[data-x*="llo"]',
 		'[data-x~="b"]', '[data-x|="Hello"]', '[lang|="en"]', '[rel~="sponsored"]', 'a[href*="/aff?"]', 'a[href^="http://x.test"]',
 		'a[href$="/ok"]', 'iframe[src*="doubleclick.net"]', '[id^="google_ads"]', '[id^="div-gpt-ad"]', '[data-slot=""]', '[data-slot]',
-		'[data-x^=""]', "div[class*='ad']", 'input[value*="ad" i]', "input[type=text]", 'input[name="q"][type="text"]', "[title]", 'div[title="Big Sale"]',
+		"div[class*='ad']", 'input[value*="ad" i]', "input[type=text]", 'input[name="q"][type="text"]', "[title]", 'div[title="Big Sale"]',
 		'[width="300"]', "body", "body.page", "#top.home", "span", "span[class]", "span[data-x]", "img[alt]", "[alt=x]",
 	]
 
@@ -340,6 +340,15 @@ class FastSelectorTests(unittest.TestCase):
 			fast = A.compile_selector(selector)
 			for el in elements:
 				self.assertEqual(bool(fast(el)), soupsieve.match(selector, el), f"{selector} on <{el.name} {el.attrs}>")
+
+	def test_empty_attribute_values_match_nothing_as_the_css_spec_says(self):
+		# Browsers (and the filter lists, which are written for them) treat [a^=""], [a$=""] and [a*=""] as matching
+		# nothing. soupsieve's behaviour here differs between versions, so check the spec rather than comparing to it.
+		soup = BeautifulSoup(self.HTML, "html5lib")
+		for selector in ('[data-x^=""]', '[data-x$=""]', '[data-x*=""]', '[data-x~=""]'):
+			fast = A.compile_selector(selector)
+			self.assertFalse(any(fast(el) for el in soup.find_all(True)), selector)
+		self.assertTrue(any(A.compile_selector('[data-slot=""]')(el) for el in soup.find_all(True)))  # = "" still matches an empty value
 
 	def test_index_finds_every_element_a_selector_can_match(self):
 		import soupsieve

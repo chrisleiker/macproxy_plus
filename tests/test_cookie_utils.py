@@ -169,10 +169,27 @@ class ConfigTests(unittest.TestCase):
 		self.assertEqual(C.client_key("10.0.0.5", SimpleNamespace(COOKIE_CLIENT_KEY="global")), "global")
 		self.assertEqual(C.client_key("10.0.0.5", SimpleNamespace(COOKIE_CLIENT_KEY="IP")), "10.0.0.5")
 
+	def test_support_is_off_unless_switched_on(self):
+		self.assertFalse(C.enabled(SimpleNamespace()))
+		self.assertFalse(C.enabled(SimpleNamespace(COOKIE_SUPPORT=False)))
+		self.assertTrue(C.enabled(SimpleNamespace(COOKIE_SUPPORT=True)))
+
+	def test_a_disabled_store_ignores_the_jar_file(self):
+		with tempfile.TemporaryDirectory() as d:
+			path = os.path.join(d, "cookies.json")
+			with open(path, "w") as f:
+				json.dump({"c": [{"name": "sid", "value": "x", "domain": ".x.test", "path": "/", "expires": None}]}, f)
+			off = C.store_from_config(SimpleNamespace(COOKIE_JAR_FILE=path))
+			self.assertEqual(off.clients(), [])  # not loaded...
+			off.jar("c").set_cookie(make_cookie())
+			self.assertFalse(off.save())  # ...and never written back
+			on = C.store_from_config(SimpleNamespace(COOKIE_SUPPORT=True, COOKIE_JAR_FILE=path))
+			self.assertEqual([c.name for c in on.jar("c")], ["sid"])
+
 	def test_store_from_config(self):
-		store = C.store_from_config(SimpleNamespace(COOKIE_MAX_CLIENTS=3, COOKIE_MAX_PER_CLIENT=7))
+		store = C.store_from_config(SimpleNamespace(COOKIE_SUPPORT=True, COOKIE_MAX_CLIENTS=3, COOKIE_MAX_PER_CLIENT=7))
 		self.assertEqual((store.max_clients, store.max_per_client, store.path), (3, 7, None))
-		store = C.store_from_config(SimpleNamespace())
+		store = C.store_from_config(SimpleNamespace(COOKIE_SUPPORT=True))
 		self.assertEqual((store.max_clients, store.max_per_client), (C.DEFAULT_MAX_CLIENTS, C.DEFAULT_MAX_PER_CLIENT))
 
 

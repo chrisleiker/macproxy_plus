@@ -18,7 +18,12 @@ jar for each client (identified by its IP address, or one shared jar with COOKIE
 The same jar is used for the proxy's own requests and for the headless Chromium that renders pages, so a
 login made through either one is seen by both.
 
+Cookie and login support is OFF unless COOKIE_SUPPORT = True. While it is off the proxy keeps no cookies between
+requests, the headless browser starts every page with none, JavaScript login forms are not routed through the
+renderer, and the /__mp/cookies page is unavailable.
+
 Settings (config.py, all optional):
+  COOKIE_SUPPORT       True to turn cookies and logins on (default False)
   COOKIE_CLIENT_KEY    "ip" (default: a separate jar per client IP) or "global" (one jar for everyone)
   COOKIE_JAR_FILE      path of a JSON file; when set, jars are saved there (permissions 0600) and reloaded on
                        start, so logins survive restarts. Unset = memory only.
@@ -277,7 +282,14 @@ def client_key(remote_addr, config=None):
 	return remote_addr or "unknown"
 
 
+def enabled(config):
+	"""Is cookie and login support switched on? It is off unless COOKIE_SUPPORT = True."""
+	return bool(getattr(config, "COOKIE_SUPPORT", False))
+
+
 def store_from_config(config):
+	if not enabled(config):
+		return CookieStore()  # in memory, and never read from or written to COOKIE_JAR_FILE
 	return CookieStore(
 		path=getattr(config, "COOKIE_JAR_FILE", None) or None,
 		max_clients=int(getattr(config, "COOKIE_MAX_CLIENTS", None) or DEFAULT_MAX_CLIENTS),

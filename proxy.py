@@ -345,6 +345,10 @@ def handle_default_request():
 		print(f"Error in handle_default_request: {str(e)}")
 		return abort(500, ERROR_HEADER + str(e))
 
+def cookies_enabled():
+	"""Cookie and login support is off unless COOKIE_SUPPORT = True in config.py."""
+	return cookie_utils.enabled(config)
+
 def current_client():
 	"""Identifies the cookie jar (and rendered-page cache) of the client making this request."""
 	return cookie_utils.client_key(request.remote_addr, config)
@@ -378,7 +382,7 @@ def render_if_needed(resp, content, headers):
 	html = render_utils.handoff_pop(client, target)
 	if not html:
 		html = render_utils.render_page(target, config, request.headers.get("Accept-Language"),
-										client=client, store=cookie_store, auth=basic_auth_credentials())
+										client=client, store=cookie_store if cookies_enabled() else None, auth=basic_auth_credentials())
 	if not html:
 		return content, headers  # rendering failed: fall back to the page as the site sent it
 	headers = {k: v for k, v in headers.items() if k.lower() not in ('content-type', 'content-length', 'content-encoding')}
@@ -437,7 +441,9 @@ def send_post(sess, url, headers):
 
 def send_request(url, headers):
 	print(f"Sending request to: {url}")
-	sess = cookie_store.session(current_client())
+	# Without cookie support each request gets a fresh session: cookies still work within one request (a redirect
+	# chain) but nothing is remembered afterwards
+	sess = cookie_store.session(current_client()) if cookies_enabled() else requests.Session()
 	if request.method == "POST":
 		return send_post(sess, url, headers)
 	if headers.get("Authorization") and url.startswith("http://"):
@@ -459,12 +465,15 @@ def apply_caching(resp):
 @app.after_request
 def save_cookies(resp):
 	# Writes the cookie jars to COOKIE_JAR_FILE when that is configured and something changed
-	cookie_store.save()
+	if cookies_enabled():
+		cookie_store.save()
 	return resp
 
 @app.route("/__mp/form", methods=["POST"])
 def handle_form_replay():
 	"""Submit a form that the page's own scripts would have handled, by replaying it in the headless browser."""
+	if not cookies_enabled():
+		return abort(404)
 	form = request.form
 	page_url = form.get("__mp_url", "")
 	if not render_utils.enabled(config) or not page_url:
@@ -551,10 +560,14 @@ def _cookie_page(message=""):
 
 @app.route("/__mp/cookies", methods=["GET"])
 def show_cookies():
+	if not cookies_enabled():
+		return abort(404)
 	return Response(_cookie_page(), mimetype="text/html")
 
 @app.route("/__mp/cookies/clear", methods=["POST"])
 def clear_cookies():
+	if not cookies_enabled():
+		return abort(404)
 	domain = request.form.get("domain", "").strip().lower().lstrip(".")
 	jar = cookie_store.jar(current_client())
 	if domain:

@@ -13,5 +13,6 @@ services:
     volumes:
       # Copy config.py.example to config.py and edit it to enable extensions
       - ./config.py:/app/config.py:ro
-      # Optional: somewhere to keep logins across restarts (set COOKIE_JAR_FILE = "/app/data/cookies.json")
+      # Optional: somewhere to keep logins across restarts (needs COOKIE_SUPPORT = True and
+      # COOKIE_JAR_FILE = "/app/data/cookies.json"), and the downloaded ad-blocking lists
       - ./data:/app/data

@@ -63,6 +63,9 @@ ENABLED_EXTENSIONS = [
 
 # Logins and cookies. Cookies live on the proxy, one jar per device (IP address), shared by the proxy and the
 # headless browser; your browser never holds them. They are kept in memory unless you set a file.
+# Cookie and login support is switched OFF for now; set COOKIE_SUPPORT = True to turn it back on. The settings
+# below only do anything when it is on.
+#COOKIE_SUPPORT = True
 #COOKIE_JAR_FILE = "/app/data/cookies.json"   # keep logins across restarts (file mode 0600; mount a volume for it)
 #COOKIE_CLIENT_KEY = "ip"                      # "global" makes every device share one jar
 #COOKIE_MAX_CLIENTS = 50

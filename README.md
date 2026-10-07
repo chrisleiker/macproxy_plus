@@ -106,6 +106,8 @@ It works in three places: (1) requests your browser makes to ad and tracker URLs
 
 ### Logins and cookies
 
+> **Switched off for now.** Cookie and login support is disabled by default. Add `COOKIE_SUPPORT = True` to `config.py` to turn it back on; everything below describes how it behaves when it is on. While it is off, the proxy remembers no cookies between requests (cookies still work inside a single request, such as a redirect chain), the headless browser starts each page with none, script-handled forms are left as the page has them, and the `/__mp/cookies` and `/__mp/form` addresses return 404. `Set-Cookie` is never passed on to your browser either way.
+
 Your browser never stores or sends a site's cookies. Instead macproxy keeps a **cookie jar on the server for each device** (identified by its IP address), used both for the proxy's own requests and by the headless browser, so a login made one way is seen by the other.
 
 - **Classic login forms** (a normal `<form method="post">`, like instapaper.com/user/login) just work: the form is posted to the site over `https://` first (so the password never goes upstream unencrypted), with a matching `Origin`, and the cookies it sets stay on the server. A login that redirects to a JavaScript-built page is rendered with those cookies.
