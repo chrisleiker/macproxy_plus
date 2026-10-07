@@ -421,13 +421,14 @@ def _have_playwright():
 		return False
 
 
-def render_page(url, config, accept_language=None, client=None, store=None, auth=None):
+def render_page(url, config, accept_language=None, client=None, store=None, auth=None, use_cache=True):
 	"""Return the page's HTML after its JavaScript has run, or None if rendering failed (caller falls back).
 
 	`store` (a CookieStore) and `client` select the cookie jar to use and update; `auth` is an optional
-	(username, password) pair for HTTP Basic authentication."""
+	(username, password) pair for HTTP Basic authentication. `use_cache=False` neither reads nor writes the page cache
+	(used when the page was rendered with cookies that must not outlive the request)."""
 	ttl = float(_cfg(config, "RENDER_CACHE_SECONDS", 300))
-	cached = cache_get(url, ttl, client)
+	cached = cache_get(url, ttl, client) if use_cache else None
 	if cached is not None:
 		print(f"Render: {url} served from cache")
 		return cached
@@ -440,7 +441,7 @@ def render_page(url, config, accept_language=None, client=None, store=None, auth
 	html, cookies_after = result
 	if store is not None:
 		store.merge_playwright(client, cookies_after)
-	if html:
+	if html and use_cache:
 		cache_put(url, html, client)
 	return html or None
 

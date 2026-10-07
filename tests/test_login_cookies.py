@@ -83,6 +83,9 @@ class Site(http.server.BaseHTTPRequestHandler):
 				self.reply(f"<html><body><p id='who'>Welcome {user}</p></body></html>")
 			else:
 				self.reply("<html><body>please log in</body></html>", 401)
+		elif path == "/greet":
+			user = SESSIONS.get(cookies.get("session"))
+			self.reply(f"<html><body><p id='greet'>hello {user or 'guest'}</p></body></html>")
 		elif path == "/whoami":
 			self.reply(json.dumps(cookies), ctype="application/json")
 		elif path == "/app":
@@ -119,7 +122,8 @@ class Site(http.server.BaseHTTPRequestHandler):
 			if form.get("user") == ["alice"] and form.get("pass") == ["wonder"]:
 				token = os.urandom(6).hex()
 				SESSIONS[token] = "alice"
-				self.reply("", 302, headers=[("Location", "/home"), ("Set-Cookie", f"session={token}; Path=/; HttpOnly")])
+				target = parse_qs(urlparse(self.path).query).get("next", ["/home"])[0]
+				self.reply("", 302, headers=[("Location", target), ("Set-Cookie", f"session={token}; Path=/; HttpOnly")])
 			else:
 				self.reply("<html><body>bad login</body></html>")
 		elif path == "/api/login":
@@ -366,6 +370,16 @@ class LoginCookieTests(unittest.TestCase):
 			self.assertEqual(self.jar_names(), set())  # but nothing is kept
 			self.assertEqual(self.req("get", "/home").status_code, 401)
 			self.assertEqual(json.loads(self.req("get", "/whoami").data), {})
+
+	def test_off_the_renderer_sees_the_cookies_from_the_redirect_chain_but_never_caches_them(self):
+		self.proxy.config.RENDER_CACHE_SECONDS = 300
+		with self.cookies_off():
+			r = self.req("post", "/login?next=/greet", data={"user": "alice", "pass": "wonder", "csrf": "tok123"})
+			self.assertIn(b"hello alice", r.data)  # the headless browser used this request's cookies...
+			self.assertEqual(self.jar_names(), set())  # ...but nothing was stored
+			later = self.req("get", "/greet")
+			self.assertIn(b"hello guest", later.data)  # and the logged-in render was not cached for the next visitor
+			self.assertIn(b"hello guest", self.req("get", "/greet", client="10.0.0.2").data)
 
 	def test_off_cookies_set_by_page_script_are_not_kept(self):
 		with self.cookies_off():

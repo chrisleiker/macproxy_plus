@@ -387,11 +387,23 @@ def render_if_needed(resp, content, headers):
 	if not render_utils.should_render(target, config):
 		return content, headers
 	client = current_client()
+	store, use_cache = cookie_store, True
+	if not cookies_enabled():
+		# Nothing is remembered between requests, but the redirect chain that led here (a login, a consent or session
+		# cookie set on the way) must still be visible to the headless browser, or it would see a different page than
+		# we just fetched. Give it this request's cookies only, in a throwaway store, and keep the result out of the cache.
+		store = None
+		collected = getattr(getattr(g, 'request_session', None), 'cookies', None)
+		if collected is not None and len(collected):
+			store = cookie_utils.CookieStore()
+			for cookie in collected:
+				store.jar(client).set_cookie(cookie)
+			use_cache = False
 	# A page produced by a form the client just submitted is shown first (once)
 	html = render_utils.handoff_pop(client, target)
 	if not html:
 		html = render_utils.render_page(target, config, request.headers.get("Accept-Language"),
-										client=client, store=cookie_store if cookies_enabled() else None, auth=basic_auth_credentials())
+										client=client, store=store, auth=basic_auth_credentials(), use_cache=use_cache)
 	if not html:
 		return content, headers  # rendering failed: fall back to the page as the site sent it
 	headers = {k: v for k, v in headers.items() if k.lower() not in ('content-type', 'content-length', 'content-encoding')}
@@ -453,6 +465,7 @@ def send_request(url, headers):
 	# Without cookie support each request gets a fresh session: cookies still work within one request (a redirect
 	# chain) but nothing is remembered afterwards
 	sess = cookie_store.session(current_client()) if cookies_enabled() else requests.Session()
+	g.request_session = sess  # render_if_needed reads the cookies this request collected
 	if request.method == "POST":
 		return send_post(sess, url, headers)
 	if headers.get("Authorization") and url.startswith("http://"):
