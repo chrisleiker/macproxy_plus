@@ -93,6 +93,10 @@ class Site(http.server.BaseHTTPRequestHandler):
 			self.reply("<html><body><p>js</p><script>document.cookie='jsmark=1; path=/';</script></body></html>")
 		elif path == "/setcookie":
 			self.reply("<html><body>set</body></html>", headers=[("Set-Cookie", "plain=1; Path=/; HttpOnly"), ("Set-Cookie", "second=2; Path=/")])
+		elif path == "/policy":
+			self.reply("<html><head><meta http-equiv='Content-Security-Policy' content='upgrade-insecure-requests'></head><body>p</body></html>",
+					   headers=[("Content-Security-Policy", "upgrade-insecure-requests; default-src 'self'"), ("Strict-Transport-Security", "max-age=63072000"),
+								("X-Frame-Options", "DENY"), ("Cross-Origin-Embedder-Policy", "require-corp"), ("X-Custom", "kept")])
 		elif path == "/echoquery":
 			self.reply(parts.query, ctype="text/plain")
 		elif path == "/secret":
@@ -246,6 +250,15 @@ class LoginCookieTests(unittest.TestCase):
 	def test_multi_value_form_fields_all_arrive(self):
 		r = self.req("post", "/formecho", data={"tag": ["a", "b"], "x": "1"})
 		self.assertEqual(sorted(r.data.decode().split("&")), ["tag=a", "tag=b", "x=1"])
+
+	def test_security_policy_headers_and_meta_are_not_passed_on(self):
+		# A browser that obeys the site's CSP / HSTS would upgrade every request to https and fail to load the page's
+		# stylesheets and images through this http-only proxy
+		r = self.req("get", "/policy")
+		for header in ("Content-Security-Policy", "Strict-Transport-Security", "X-Frame-Options", "Cross-Origin-Embedder-Policy"):
+			self.assertIsNone(r.headers.get(header), header)
+		self.assertEqual(r.headers.get("X-Custom"), "kept")
+		self.assertNotIn("content-security-policy", r.data.decode().lower())
 
 	def test_query_string_is_not_duplicated(self):
 		self.assertEqual(self.req("get", "/echoquery?a=1&b=2").data, b"a=1&b=2")

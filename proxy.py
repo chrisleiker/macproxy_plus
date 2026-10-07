@@ -314,11 +314,20 @@ def process_response(response, url):
 	response = Response(content, status_code)
 	for key, value in headers.items():
 		# Cookies stay on the server (cookie_store); the browser never sees them
-		if key.lower() not in ["content-encoding", "content-length", "transfer-encoding", "set-cookie"]:
+		if key.lower() not in ["content-encoding", "content-length", "transfer-encoding", "set-cookie"] + SECURITY_POLICY_HEADERS:
 			response.headers[key] = value
 
 	print("Finished processing response")
 	return response
+
+# Headers that describe how the ORIGINAL site (served over https) wants its page treated. The proxy serves the page
+# over http from a different address, so a browser that obeys them (PowerFox, Chrome, ...) would upgrade every request
+# to https and block everything not on the page's own origin, and then fail to load any stylesheet or image.
+SECURITY_POLICY_HEADERS = [
+	"content-security-policy", "content-security-policy-report-only", "x-content-security-policy", "x-webkit-csp",
+	"strict-transport-security", "upgrade-insecure-requests", "cross-origin-embedder-policy", "cross-origin-opener-policy",
+	"cross-origin-resource-policy", "x-frame-options", "alt-svc", "expect-ct", "public-key-pins", "report-to", "nel",
+]
 
 def handle_default_request():
 	url = request.url.replace("https://", "http://", 1)

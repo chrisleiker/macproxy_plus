@@ -66,3 +66,26 @@ class UseTagTests(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+@unittest.skipUnless(HAVE_STACK, "needs Flask and pillow-svg (available in the Docker image)")
+class SecurityPolicyTests(unittest.TestCase):
+	"""A page's own <meta> content security policy must not survive, for the same reason the header does not."""
+
+	setUpClass = classmethod(lambda cls: UseTagTests.setUpClass.__func__(cls))
+	tearDownClass = classmethod(lambda cls: UseTagTests.tearDownClass.__func__(cls))
+	transcode = UseTagTests.transcode
+
+	def test_meta_content_security_policy_is_removed(self):
+		for meta in ('<meta http-equiv="Content-Security-Policy" content="default-src \'self\'">',
+					 '<meta http-equiv="content-security-policy" content="upgrade-insecure-requests">',
+					 '<meta http-equiv="Content-Security-Policy-Report-Only" content="default-src \'none\'">',
+					 '<meta http-equiv="X-Content-Security-Policy" content="default-src \'self\'">'):
+			out = self.transcode(f"<html><head>{meta}<title>t</title></head><body><p>kept</p></body></html>")
+			self.assertNotIn("ontent-Security", out.replace("ontent-security", "ontent-Security"))
+			self.assertIn("<p>kept</p>", out)
+
+	def test_other_meta_tags_are_kept(self):
+		out = self.transcode('<html><head><meta http-equiv="refresh" content="5"><meta name="viewport" content="width=device-width"></head><body>x</body></html>')
+		self.assertIn("viewport", out)
+		self.assertIn("refresh", out)

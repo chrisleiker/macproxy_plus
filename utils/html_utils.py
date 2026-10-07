@@ -140,6 +140,10 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 	# tags. Using html.parser will corrupt SVGs and possibly other XML tags.
 	soup = BeautifulSoup(html, "html5lib")
 
+	# A <meta> content security policy makes the same demands as the header (see SECURITY_POLICY_HEADERS in proxy.py)
+	for tag in soup.find_all('meta', attrs={'http-equiv': re.compile(r'^\s*(x-)?(webkit-)?content-security-policy(-report-only)?\s*$', re.I)}):
+		tag.decompose()
+
 	# Contents of <pre> tags should always use HTML entities
 	for tag in soup.find_all(['pre']):
 		tag.replace_with(str(tag))
