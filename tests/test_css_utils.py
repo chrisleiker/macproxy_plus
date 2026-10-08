@@ -236,6 +236,49 @@ class RobustnessTests(unittest.TestCase):
 		self.assertEqual(d("p{color:red}".encode()), "p{color:red}")
 
 
+class RootClassVariableTests(unittest.TestCase):
+	"""Theme variables hung on a class of <body>/<html> are as global as the ones on :root."""
+
+	THEME = ".theme{--gap:21px;--pad:0 16px 0 0}.other{--gap:99px}.nav{column-gap:var(--gap);margin:var(--pad)}"
+
+	def vars_for(self, markup):
+		from bs4 import BeautifulSoup
+		vars = {}
+		C.register_root_elements(BeautifulSoup(markup, "html.parser"), vars)
+		return vars
+
+	def test_a_class_on_body_counts_as_a_root(self):
+		vars = self.vars_for('<html><body class="x theme"><div class="nav"></div></body></html>')
+		out = C.downlevel_css(self.THEME, OLD, vars=vars).replace(" ", "")
+		self.assertIn("margin:016px00", out)
+		self.assertIn("column-gap:21px", out)
+
+	def test_a_class_on_html_or_an_id_counts_too(self):
+		for markup in ('<html class="theme"><body></body></html>', '<html><body id="theme"></body></html>'):
+			css = self.THEME.replace(".theme", "#theme" if "id=" in markup else ".theme")
+			out = C.downlevel_css(css, OLD, vars=self.vars_for(markup)).replace(" ", "")
+			self.assertIn("margin:016px00", out, markup)
+
+	def test_compound_and_element_prefixed_selectors(self):
+		vars = self.vars_for('<html><body class="a b"></body></html>')
+		out = C.downlevel_css("body.a.b{--c:7px}.x{width:var(--c)}", OLD, vars=vars).replace(" ", "")
+		self.assertIn("width:7px", out)
+
+	def test_a_class_that_is_not_on_body_or_html_does_not(self):
+		vars = self.vars_for('<html><body class="theme"><div class="other"></div></body></html>')
+		out = C.downlevel_css(self.THEME, OLD, vars=vars).replace(" ", "")
+		self.assertNotIn("99px", out)
+
+	def test_without_registered_names_nothing_changes(self):
+		out = C.downlevel_css(self.THEME, OLD, vars={}).replace(" ", "")
+		self.assertNotIn("21px", out)
+
+	def test_the_registry_does_not_break_variable_lookup(self):
+		vars = self.vars_for('<html><body class="theme"></body></html>')
+		vars["--a"] = "3px"
+		self.assertIn("width:3px", C.downlevel_css(".x{width:var(--a)}", OLD, vars=vars).replace(" ", ""))
+
+
 if __name__ == "__main__":
 	unittest.main()
 

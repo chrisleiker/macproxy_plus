@@ -127,6 +127,16 @@ def downlevel_page_css(soup, url, page_style=None):
 		except Exception as e:
 			print(f"Aspect-ratio emulation failed ({type(e).__name__}: {e})")
 
+	# A picture filling a padding-bottom box (Next.js <Image fill>) is shown at its natural size by older engines; let it
+	# flow. After the aspect-ratio step, which is what gives some of these boxes their padding.
+	if getattr(config, 'FLATTEN_FILL_IMAGES', True):
+		try:
+			count = aspect_utils.flatten_fill_images(soup)
+			if count:
+				print(f"Fill images: put {count} pictures back in the flow on {(url or '')[:80]}")
+		except Exception as e:
+			print(f"Fill-image flattening failed ({type(e).__name__}: {e})")
+
 
 def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False, 
 				  tags_to_unwrap=None, tags_to_strip=None, attributes_to_strip=None,
@@ -148,6 +158,8 @@ def transcode_html(html, url=None, whitelisted_domains=None, simplify_html=False
 	# The html5lib parser is required in order to preserve case-sensitivity of
 	# tags. Using html.parser will corrupt SVGs and possibly other XML tags.
 	soup = BeautifulSoup(html, "html5lib")
+	if url:
+		css_utils.register_root_elements(soup, css_utils.get_site_vars(url))
 
 	# A <meta> content security policy makes the same demands as the header (see SECURITY_POLICY_HEADERS in proxy.py)
 	for tag in soup.find_all('meta', attrs={'http-equiv': re.compile(r'^\s*(x-)?(webkit-)?content-security-policy(-report-only)?\s*$', re.I)}):

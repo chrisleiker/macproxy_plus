@@ -55,7 +55,7 @@ TRACKED = {
 SVG_PROPS = {
 	"fill", "stroke", "stroke-width", "stroke-opacity", "fill-opacity", "opacity", "color", "font-size", "visibility",
 	"height", "min-width", "min-height", "max-height", "stroke-linecap", "stroke-linejoin", "fill-rule", "clip-rule",
-	"stroke-dasharray", "stroke-miterlimit",
+	"stroke-dasharray", "stroke-miterlimit", "transform",
 }
 ASPECT_PROPS = {"aspect-ratio"}  # read by utils/aspect_utils.py
 ACCEPTED = TRACKED | SVG_PROPS | ASPECT_PROPS
@@ -878,7 +878,19 @@ def plan_flex(el, props, is_inline, kids, plan, settings, extras=0.0, sizing="co
 	cont = [("display", "inline-table" if is_inline else "table")] + TABLE_BOX
 	has_width = bool(props.get("width"))
 	comp, widen = spacing_compensation(props, cgap, 0, vertical=False)
-	if justify in ("center", "flex-end", "end", "right"):
+	# A lone item that is `width:100%` fills the container whatever the justification (it is what wide pages do to hold
+	# `max-width: 1100px; margin: 0 auto` content). Shrink-wrapping the table would give it nothing to be 100% of.
+	fills = n == 1 and (kids[0][1].get("width") or "").strip().replace(" ", "") == "100%"
+	if fills and justify in ("center", "flex-end", "end", "right"):
+		item_max = px_value(kids[0][1].get("max-width"))
+		if item_max and item_max < cw:
+			cont += [("margin-left", "auto")] + ([("margin-right", "auto")] if justify == "center" else [])
+			cont.append(("width", f"{_fmt(item_max)}px"))
+		else:
+			cont += comp
+			if not has_width and not is_inline:
+				cont.append(("width", container_width_css(props, cw, extras, sizing, widen)))
+	elif justify in ("center", "flex-end", "end", "right"):
 		cont.append(("margin-left", "auto"))
 		if justify == "center":
 			cont.append(("margin-right", "auto"))

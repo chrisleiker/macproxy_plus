@@ -73,6 +73,8 @@ Many sites make a 16:9 or square picture box with CSS `aspect-ratio` (Tailwind's
 
 `ASPECT_RATIO_EMULATION = False` turns it off.
 
+A related pattern is a picture that fills a placeholder box (`<div style="height:0; padding-bottom:80%"><img style="position:absolute; width:100%; height:100%">`, which is what Next.js `<Image fill>` writes). Old engines do not size an absolutely positioned picture from its box, so it shows at its natural size and a big photo covers the page. For the translating presets the proxy dissolves the box and lets the picture flow at `width:100%; height:auto`. `FLATTEN_FILL_IMAGES = False` turns it off.
+
 ### Inline SVG icons and logos
 
 Browsers like Classilla cannot draw SVG, so each inline `<svg>` on a page is drawn on the server and replaced by a picture (`<img class="... mp-svg">`). Drawn on its own, an SVG knows nothing about the page's CSS, so it used to come out black and as large as its internal coordinates. Now the proxy first works out what the page's CSS makes of each SVG, using the same style engine as the layout emulation (utility classes, media queries at the preset's window size, `var()`, `em`/`rem`):

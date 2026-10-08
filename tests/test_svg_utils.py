@@ -167,6 +167,15 @@ class HiddenTests(unittest.TestCase):
 	def test_zero_sized_is_dropped(self):
 		self.assertIsNone(one('<svg width="0" height="0" viewBox="0 0 8 8"><path d="M0 0h8v8z"/></svg>'))
 
+	def test_a_rotated_absolutely_placed_decoration_is_dropped(self):
+		for css in ("position:absolute;transform:rotate(-90deg)", "position:fixed;transform:matrix(0,-1,1,0,0,0)"):
+			self.assertIsNone(one(f'<svg style="{css}" viewBox="0 0 8 8"><path d="M0 0h8v8z"/></svg>'), css)
+
+	def test_a_rotated_or_an_absolute_one_alone_is_kept(self):
+		self.assertIsNotNone(one('<svg style="transform:rotate(90deg)" width="8" height="8" viewBox="0 0 8 8"><path d="M0 0h8v8z"/></svg>'))
+		self.assertIsNotNone(one('<svg style="position:absolute;transform:translateX(4px)" width="8" height="8" viewBox="0 0 8 8"><path d="M0 0h8v8z"/></svg>'))
+		self.assertIsNotNone(one('<svg style="position:absolute" width="8" height="8" viewBox="0 0 8 8"><path d="M0 0h8v8z"/></svg>'))
+
 	def test_visible_ones_in_the_same_page_are_kept(self):
 		_, _, results = prepare_all('<svg class="hidden" viewBox="0 0 8 8"><path d="M0 0z"/></svg>'
 									'<svg class="h-5 w-5" viewBox="0 0 8 8"><path d="M0 0z"/></svg>')

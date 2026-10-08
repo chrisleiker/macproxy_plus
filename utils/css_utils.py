@@ -856,11 +856,43 @@ def _process_rules(rules, ctx, depth):
 	return out
 
 
+# A class or id on <html>/<body>, as the page's own markup uses it: `._1se63890`, `body.theme-dark`, `html#app.dark`
+_ROOT_ELEMENT_SELECTOR = re.compile(r"^(?:html|body|:root)?((?:[.#](?:[\w-]|\\.)+)+)$")
+_ROOT_PARTS = re.compile(r"[.#](?:[\w-]|\\.)+")
+ROOT_NAMES_KEY = "__root_names__"  # kept in the vars dict, next to the custom properties it is about
+
+
+def register_root_elements(soup, vars):
+	"""Note the classes and ids on the page's <html> and <body>. Sites hang their theme variables on those
+	(`<body class="theme">` + `.theme{--gap:21px}`), which makes them as global as the ones on :root."""
+	names = set()
+	for tag in (soup.find("html"), soup.find("body")):
+		if tag is None:
+			continue
+		names.update("." + c for c in (tag.get("class") or []))
+		if tag.get("id"):
+			names.add("#" + tag["id"])
+	if names:
+		vars[ROOT_NAMES_KEY] = frozenset(names) | vars.get(ROOT_NAMES_KEY, frozenset())
+	return names
+
+
+def _is_root_selector(sel, vars):
+	if sel in ROOT_SELECTORS:
+		return True
+	names = vars.get(ROOT_NAMES_KEY)
+	if not names:
+		return False
+	m = _ROOT_ELEMENT_SELECTOR.match(sel)
+	return bool(m) and all(re.sub(r"\\(.)", r"\1", part) in names for part in _ROOT_PARTS.findall(m.group(1)))
+
+
 def _collect_vars(rules, ctx, depth):
-	"""Gather custom properties defined on :root/html/body/* (media-evaluated, imports followed)."""
+	"""Gather custom properties defined on :root/html/body/* (media-evaluated, imports followed), and on the classes and
+	ids those two elements carry on this page."""
 	for rule in rules:
 		if isinstance(rule, A.QualifiedRule):
-			if any(s in ROOT_SELECTORS for s in _split_selectors(rule.prelude)):
+			if any(_is_root_selector(s, ctx.vars) for s in _split_selectors(rule.prelude)):
 				for item in tinycss2.parse_blocks_contents(rule.content, skip_comments=True, skip_whitespace=True):
 					if isinstance(item, A.Declaration) and item.name.startswith("--"):
 						ctx.vars[item.name] = tinycss2.serialize(item.value).strip()

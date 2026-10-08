@@ -2,6 +2,7 @@
 import re
 
 # Third-party imports
+import tinycss2
 from bs4 import NavigableString, Tag
 from bs4.element import CData, Comment, Declaration, Doctype, ProcessingInstruction
 
@@ -152,5 +153,90 @@ def emulate(soup, cascade, settings=None):
 			if _is_inline(el, props):
 				pairs.insert(0, ("display", "block"))
 			_add_style(el, pairs)
+		changed += 1
+	return changed
+
+
+# --- Picture that fills a padding-bottom box (Next.js <Image fill>, "responsive embed" boxes) ----------------------------
+#
+#   <div style="height:0; padding-bottom:80%"><img style="position:absolute; width:100%; height:100%; left:0; top:0 ..."></div>
+#
+# Older engines do not size an absolutely positioned picture from its box (Classilla shows it at its natural size, and a
+# 1000px photo then covers the page). The box only exists to reserve the picture's height, which a picture that simply
+# flows at `width:100%; height:auto` has by itself, so the box is dissolved and the picture put back in the flow.
+
+_FILL_DROP = {"position", "top", "left", "right", "bottom", "height", "min-height", "max-height", "inset", "object-fit",
+			  "object-position", "transform", "z-index"}
+_BOX_DROP = {"height", "padding-bottom", "padding-top", "min-height"}
+_IGNORED_CHILDREN = {"script", "style", "noscript", "template", "link", "meta"}
+
+
+def _declarations(style):
+	"""'a:b;c:url("x;y")' -> [('a', 'b'), ('c', 'url("x;y")')]; semicolons inside quotes or url() do not split."""
+	out = []
+	for decl in tinycss2.parse_declaration_list(style or "", skip_whitespace=True, skip_comments=True):
+		if decl.type == "declaration":
+			out.append((decl.lower_name, tinycss2.serialize(decl.value).strip()))
+	return out
+
+
+def _write_style(el, declarations):
+	text = ";".join(f"{k}:{v}" for k, v in declarations)
+	if text:
+		el["style"] = text
+	else:
+		el.attrs.pop("style", None)
+
+
+def _is_zero(value):
+	return value is not None and value.strip().lower() in ("0", "0px", "0%", "0em", "0rem")
+
+
+def _is_percent_100(value):
+	return value is not None and value.strip().lower().replace(" ", "") in ("100%", "100.0%")
+
+
+def flatten_fill_images(soup):
+	"""Put filling pictures back in the flow (see above). Returns how many were changed."""
+	changed = 0
+	for img in soup.find_all("img"):
+		if img.decomposed or not img.get("style"):
+			continue
+		decls = _declarations(img["style"])
+		props = dict(decls)
+		if props.get("position", "").strip().lower() != "absolute":
+			continue
+		inset_fill = ("inset" in props and _is_zero(props["inset"].split()[0]))
+		if not (_is_percent_100(props.get("width")) and _is_percent_100(props.get("height"))):
+			continue
+		if not inset_fill and not (_is_zero(props.get("left")) and _is_zero(props.get("top"))):
+			continue
+		box = img.parent
+		if box is None or box.name in ("body", "html", "[document]"):
+			continue
+		siblings = [c for c in box.children
+					if (isinstance(c, Tag) and c is not img and c.name.lower() not in _IGNORED_CHILDREN)
+					or (isinstance(c, NavigableString) and not isinstance(c, (Comment, Doctype, Declaration, ProcessingInstruction, CData))
+						and str(c).strip())]
+		if siblings:
+			continue
+		box_decls = _declarations(box.get("style"))
+		box_props = dict(box_decls)
+		# The box is only a placeholder for the picture's height: no height at all, or the zero-height padding trick
+		height = box_props.get("height")
+		if height is not None and not _is_zero(height) and height.strip().lower() != "auto":
+			continue
+		if height is None and not box_props.get("padding-bottom"):
+			continue
+
+		# Keep the blur placeholder out of the way as well: it is a data: URI of several hundred bytes, drawn behind a picture
+		# that is about to show its own pixels
+		kept = [(k, v) for k, v in decls if k not in _FILL_DROP and not (k == "background-image" and "data:" in v)]
+		kept = [(k, v) for k, v in kept if k not in ("width", "background-size", "background-position", "background-repeat")]
+		kept += [("display", "block"), ("width", "100%"), ("height", "auto")]
+		_write_style(img, kept)
+		_write_style(box, [(k, v) for k, v in box_decls if k not in _BOX_DROP])
+		img.attrs.pop("height", None)
+		img.attrs.pop("width", None)
 		changed += 1
 	return changed

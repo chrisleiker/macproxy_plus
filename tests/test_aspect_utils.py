@@ -264,10 +264,74 @@ class PageTests(unittest.TestCase):
 		out = self.transcode('<p id="p">hello</p>')
 		self.assertNotIn("style=", BeautifulSoup(out, "html5lib").find(id="p").__str__())
 
+	FILL = ('<div id="b" class="aspect-video"><img id="i" style="position:absolute;height:100%;width:100%;left:0;top:0" '
+			'src="http://x.test/a.jpg"></div>')
+
+	def test_a_filling_picture_in_an_aspect_ratio_box_ends_up_in_the_flow(self):
+		soup = BeautifulSoup(self.transcode(self.FILL), "html5lib")
+		img = soup.find(id="i")
+		self.assertNotIn("absolute", img["style"])
+		self.assertEqual(style_of(img)["height"], "auto")
+		self.assertNotIn("padding-bottom", soup.find(id="b").get("style", ""))
+
+	def test_flattening_has_its_own_switch(self):
+		out = self.transcode(self.FILL, FLATTEN_FILL_IMAGES=False)
+		soup = BeautifulSoup(out, "html5lib")
+		self.assertIn("absolute", soup.find(id="i")["style"])
+		self.assertEqual(style_of(soup.find(id="b"))["padding-bottom"], "56.25%")
+
 	def test_an_iframe_is_wrapped(self):
 		out = self.transcode('<iframe id="f" class="aspect-video w-full" src="http://v.test/e"></iframe>')
 		frame = BeautifulSoup(out, "html5lib").find(id="f")
 		self.assertEqual(style_of(frame.parent)["padding-bottom"], "56.25%")
+
+
+class FlattenFillImageTests(unittest.TestCase):
+	NEXT = ('<div id="box" class="c" style="height:0;padding-bottom:80%"><img id="i" alt="x" data-nimg="fill" '
+			'style="position:absolute;height:100%;width:100%;left:0;top:0;right:0;bottom:0;color:transparent;'
+			'background-size:cover;background-image:url(&quot;data:image/svg+xml;charset=utf-8,%3Csvg%3E%3C/svg%3E&quot;)" '
+			'src="http://x.test/a.jpg"></div>')
+
+	def flatten(self, body):
+		soup = BeautifulSoup(f"<html><body>{body}</body></html>", "html5lib")
+		return soup, A.flatten_fill_images(soup)
+
+	def test_next_fill_image_goes_back_in_the_flow(self):
+		soup, count = self.flatten(self.NEXT)
+		self.assertEqual(count, 1)
+		img, box = soup.find(id="i"), soup.find(id="box")
+		style = style_of(img)
+		self.assertEqual((style["width"], style["height"], style["display"]), ("100%", "auto", "block"))
+		for gone in ("position", "left", "top", "right", "bottom"):
+			self.assertNotIn(gone, style)
+		self.assertIn("color:transparent", img["style"])
+		self.assertNotIn("data:", img["style"])
+		self.assertNotIn("padding-bottom", box.get("style", ""))
+		self.assertNotIn("height", box.get("style", ""))
+
+	def test_other_properties_of_the_box_survive(self):
+		soup, _ = self.flatten('<div id="box" style="position:relative;height:0;padding-bottom:56.25%;overflow:hidden">'
+							   '<img style="position:absolute;inset:0;width:100%;height:100%" src="a.png"></div>')
+		self.assertEqual(style_of(soup.find(id="box")), {"position": "relative", "overflow": "hidden"})
+
+	def test_a_box_with_other_content_is_left_alone(self):
+		body = ('<div style="height:0;padding-bottom:50%"><img style="position:absolute;width:100%;height:100%;left:0;top:0" '
+				'src="a.png"><span>caption</span></div>')
+		soup, count = self.flatten(body)
+		self.assertEqual(count, 0)
+		self.assertIn("absolute", soup.find("img")["style"])
+
+	def test_a_box_with_a_real_height_is_left_alone(self):
+		body = ('<div style="height:300px"><img style="position:absolute;width:100%;height:100%;left:0;top:0" src="a.png"></div>')
+		self.assertEqual(self.flatten(body)[1], 0)
+
+	def test_partly_filling_pictures_are_left_alone(self):
+		body = ('<div style="height:0;padding-bottom:50%"><img style="position:absolute;width:50%;height:100%;left:0;top:0" '
+				'src="a.png"></div>')
+		self.assertEqual(self.flatten(body)[1], 0)
+
+	def test_ordinary_pictures_are_left_alone(self):
+		self.assertEqual(self.flatten('<img style="width:100%" src="a.png">')[1], 0)
 
 
 if __name__ == "__main__":

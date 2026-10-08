@@ -230,6 +230,9 @@ def prepare(tag, cascade):
 		return None
 	if not has_visible_content(tag):
 		return None  # a sprite sheet of definitions, not a picture
+	if (props.get("position") or "").strip().lower() in ("absolute", "fixed") and re.search(
+			r"rotate|matrix|skew|scale", props.get("transform") or "", re.I):
+		return None  # a decoration placed by turning it (a sideways wordmark): without the transform it would land on the text
 	for parent in tag.parents:
 		if isinstance(parent, Tag) and (cascade.props(parent).get("display") or "").strip().lower() == "none":
 			return None  # inside something hidden: the <img> would be hidden too, but there is no point drawing it

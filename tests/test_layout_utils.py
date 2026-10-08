@@ -93,6 +93,23 @@ class FlexRowTests(unittest.TestCase):
 		self.assertEqual(st["margin-right"], "auto")
 		self.assertNotIn("width", st)
 
+	def test_a_lone_full_width_item_fills_a_centred_container(self):
+		s = run(".c{display:flex;justify-content:center}.i{width:100%;max-width:1100px}",
+				'<div class="c"><div class="i">x</div></div>')
+		st = style_of(s.select_one(".c"))
+		self.assertNotIn("margin-left", st)
+		self.assertEqual(st["width"], "100%")  # the item's own 1100px cap is wider than the viewport
+
+	def test_a_lone_full_width_item_with_a_narrower_cap_is_centred_at_the_cap(self):
+		s = run(".c{display:flex;justify-content:center}.i{width:100%;max-width:600px}",
+				'<div class="c"><div class="i">x</div></div>')
+		st = style_of(s.select_one(".c"))
+		self.assertEqual((st["margin-left"], st["margin-right"], st["width"]), ("auto", "auto", "600px"))
+
+	def test_a_centred_item_without_a_width_is_still_shrink_wrapped(self):
+		s = run(".c{display:flex;justify-content:center}.i{max-width:600px}", '<div class="c"><div class="i">x</div></div>')
+		self.assertNotIn("width", style_of(s.select_one(".c")))
+
 	def test_max_width_is_pinned(self):
 		s = run(".c{display:flex;max-width:900px;margin:0 auto}", '<div class="c"><span>x</span></div>')
 		self.assertEqual(style_of(s.select_one(".c"))["width"], "900px")
